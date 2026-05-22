@@ -1,0 +1,134 @@
+data:
+  providers:
+    akshare:
+      enabled: true
+      retry_times: 3
+      retry_delay: 1.0
+    baostock:
+      enabled: true
+      retry_times: 3
+      retry_delay: 1.0
+    tushare:
+      enabled: true
+      token: ${TUSHARE_TOKEN}
+      retry_times: 3
+      retry_delay: 1.0
+  
+  storage:
+    base_path: ./data
+    compression: snappy
+    partition_by: code
+    
+  update:
+    incremental: true
+    lookback_days: 30
+    
+  validation:
+    check_future_date: true
+    check_negative_price: true
+    check_duplicate_date: true
+    check_missing_values: true
+
+strategy:
+  default:
+    stop_loss_pct: -8.0
+    take_profit_pct: 20.0
+    max_position_pct: 30.0
+    max_positions: 10
+    min_score_threshold: 60.0
+  
+  ma_strategy:
+    ma_short: 5
+    ma_long: 20
+    score_trend_up: 75.0
+    score_trend_up_weak: 60.0
+    score_trend_down: 25.0
+    score_neutral: 50.0
+
+indicators:
+  ma:
+    periods: [5, 10, 20, 60]
+  
+  rsi:
+    period: 14
+    oversold: 30
+    overbought: 70
+  
+  macd:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+  
+  bollinger_bands:
+    period: 20
+    std_dev: 2.0
+  
+  weights:
+    ma: 0.3
+    rsi: 0.25
+    macd: 0.25
+    volume: 0.2
+
+backtest:
+  initial_cash: 1000000.0
+  commission_rate: 0.0003
+  stamp_duty_rate: 0.001
+  min_commission: 5.0
+  trading_days_per_year: 252
+
+web:
+  control_panel:
+    initial_cash:
+      min_value: 10000
+      max_value: 100000000
+      default_value: 1000000
+      step: 10000
+    
+    ma_short:
+      min_value: 3
+      max_value: 20
+      default_value: 5
+    
+    ma_long:
+      min_value: 10
+      max_value: 60
+      default_value: 20
+    
+    stop_loss:
+      min_value: -20
+      max_value: -1
+      default_value: -8
+    
+    take_profit:
+      min_value: 5
+      max_value: 50
+      default_value: 20
+    
+    default_start_date: "2024-01-01"
+    default_end_date: "2024-03-31"
+
+notification:
+  dingtalk:
+    enabled: false
+    webhook_url: ""
+    retry_times: 3
+    timeout: 10
+  
+  feishu:
+    enabled: false
+    webhook_url: ""
+    retry_times: 3
+    timeout: 10
+  
+  retry:
+    max_attempts: 3
+    wait_multiplier: 1
+    wait_min: 1
+    wait_max: 10
+
+logging:
+  level: INFO
+  format: json
+  timezone: Asia/Shanghai
+
+timezone: Asia/Shanghai

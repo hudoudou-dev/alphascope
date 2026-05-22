@@ -1,0 +1,38 @@
+version: 1
+
+strategy:
+  name: limit_up_strategy
+
+  stock_selection:
+    min_price: 10
+    max_price: 50
+
+    max_market_cap: 200
+
+    min_limit_up_count: 1
+    max_limit_up_count: 5
+
+    limit_up_period: 30
+
+    max_price_increase: 30
+
+    min_volume: 100
+
+    require_profit: true
+
+  indicators:
+    ma_short: 5
+    ma_long: 20
+    rsi_period: 14
+
+  risk_control:
+    stop_loss_ratio: 0.2
+    profit_target: 0.4
+    max_stocks: 5
+
+  scoring:
+    price_weight: 0.2
+    limit_up_weight: 0.3
+    technical_weight: 0.25
+    fundamental_weight: 0.15
+    volume_weight: 0.1

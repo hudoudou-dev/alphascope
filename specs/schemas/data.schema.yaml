@@ -1,0 +1,31 @@
+version: 1
+
+bar_data:
+
+  required_fields:
+    - date
+    - open_price
+    - high_price
+    - low_price
+    - close_price
+    - volume
+    - amount
+    - code
+
+  dtypes:
+    date: datetime64[ns]
+    open_price: float64
+    high_price: float64
+    low_price: float64
+    close_price: float64
+    volume: float64
+    amount: float64
+    code: string
+
+  compression: snappy
+
+
+  adjust_type:
+  - none
+  - qfq
+  - hfq
