@@ -9,6 +9,10 @@ from src.data.providers.base_data_provider import BaseDataProvider
 
 class AKShareProvider(BaseDataProvider):
     
+    # 类级别的股票名称缓存
+    _stock_name_cache: dict[str, str] = {}
+    _cache_loaded: bool = False
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.provider_name = "akshare"
@@ -36,6 +40,7 @@ class AKShareProvider(BaseDataProvider):
         adjust_param = adjust_map.get(adjust, "qfq")
         
         try:
+            # 先下载数据，再获取股票名称（避免阻塞下载）
             if adjust_param:
                 df = ak.stock_zh_a_hist(
                     symbol=pure_code,
@@ -58,6 +63,13 @@ class AKShareProvider(BaseDataProvider):
             
             df = self._normalize_columns(df, code)
             
+            # 获取股票名称（使用缓存，避免每次都调用 API）
+            stock_name = self._get_stock_name_cached(pure_code)
+            
+            # 添加股票名称字段
+            if stock_name:
+                df["name"] = stock_name
+            
             return df
             
         except Exception as e:
@@ -67,6 +79,48 @@ class AKShareProvider(BaseDataProvider):
                 error=str(e),
             )
             raise
+    
+    def _get_stock_name_cached(self, pure_code: str) -> str:
+        """
+        获取股票名称（使用缓存）
+        
+        Args:
+            pure_code: 纯股票代码（不带交易所后缀）
+        
+        Returns:
+            str: 股票名称
+        """
+        # 如果缓存已加载，直接从缓存中获取
+        if AKShareProvider._cache_loaded and pure_code in AKShareProvider._stock_name_cache:
+            return AKShareProvider._stock_name_cache[pure_code]
+        
+        # 如果缓存未加载，尝试加载缓存
+        if not AKShareProvider._cache_loaded:
+            try:
+                # 使用 stock_info_a_code_name 获取股票代码和名称列表
+                df = ak.stock_info_a_code_name()
+                
+                # 构建缓存
+                for _, row in df.iterrows():
+                    code = row.get("code", "")
+                    name = row.get("name", "")
+                    if code and name:
+                        AKShareProvider._stock_name_cache[code] = name
+                
+                AKShareProvider._cache_loaded = True
+                
+                # 从缓存中获取
+                if pure_code in AKShareProvider._stock_name_cache:
+                    return AKShareProvider._stock_name_cache[pure_code]
+            
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to load stock name cache",
+                    error=str(e),
+                )
+        
+        # 如果缓存加载失败或找不到，返回空字符串
+        return ""
     
     def _normalize_columns(self, df: pd.DataFrame, code: str) -> pd.DataFrame:
         column_mapping = {

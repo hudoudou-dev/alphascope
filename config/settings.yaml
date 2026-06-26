@@ -31,7 +31,7 @@ data:
 
 strategy:
   default:
-    stop_loss_pct: -8.0
+    stop_loss_pct: -15.0
     take_profit_pct: 20.0
     max_position_pct: 30.0
     max_positions: 10
@@ -44,6 +44,36 @@ strategy:
     score_trend_up_weak: 60.0
     score_trend_down: 25.0
     score_neutral: 50.0
+  
+  # 选股策略超参配置
+  selection:
+    # 市值与价格区间
+    market_cap_min: 50  # 最小市值（亿元）
+    market_cap_max: 20000  # 最大市值（亿元）
+    price_min: 5.0  # 最小股价（元）
+    price_max: 2000.0  # 最大股价（元）
+    
+    # 涨跌停配置
+    limit_up_min: 0  # 最小涨停次数
+    limit_down_max: 3  # 最大跌停次数
+    limit_stat_period: 60  # 涨跌停统计周期（天）
+    max_up_threshold: 10.0  # 最大涨幅阈值（%）
+    max_down_threshold: -10.0  # 最大跌幅阈值（%）
+    
+    # 持仓配置
+    initial_cash: 1000000  # 初始资金量（元）
+    max_positions: 10  # 最大持仓股票数量
+    top_n: 20  # 候选股票数量（Top-N）
+    min_score_threshold: 70.0  # 最小评分阈值（提高到70.0，降低交易频率）
+    
+    # 交易频率控制
+    cooldown_days: 5  # 冷却期（卖出后多少天内不能重新买入同一只股票）
+    max_trades_per_day: 5  # 每天最大交易次数
+    
+    # 评分权重配置
+    ma_alignment_weight: 40  # 均线排列权重（%）
+    price_position_weight: 30  # 价格位置权重（%）
+    trend_strength_weight: 30  # 趋势强度权重（%）
 
 indicators:
   ma:

@@ -43,6 +43,7 @@ class BaseStrategy(ABC):
     
     def __init__(self, strategy_name: str | None = None):
         config = config_loader.get("strategy", {}).get("default", {})
+        selection_config = config_loader.get("strategy", {}).get("selection", {})
         
         self.strategy_name = strategy_name or self.__class__.__name__
         self.logger = get_logger(self.strategy_name)
@@ -51,7 +52,17 @@ class BaseStrategy(ABC):
         self.take_profit_pct = config.get("take_profit_pct", 20.0)
         self.max_position_pct = config.get("max_position_pct", 30.0)
         self.max_positions = config.get("max_positions", 10)
-        self.min_score_threshold = config.get("min_score_threshold", 60.0)
+        self.min_score_threshold = selection_config.get("min_score_threshold", 70.0)
+        
+        # 交易频率控制
+        self.cooldown_days = selection_config.get("cooldown_days", 5)
+        self.max_trades_per_day = selection_config.get("max_trades_per_day", 5)
+        
+        # 记录每只股票的最后卖出日期（用于冷却期）
+        self._last_sell_dates: dict[str, datetime] = {}
+        
+        # 记录每天的交易次数（用于交易频率限制）
+        self._daily_trade_counts: dict[str, int] = {}
         
         self._prepared_data: pd.DataFrame | None = None
     
@@ -78,7 +89,38 @@ class BaseStrategy(ABC):
             self.logger.debug("Already holding position", code=code)
             return False
         
-        score = self.score_stock(code, daily_data)
+        # 检查冷却期
+        if code in self._last_sell_dates:
+            last_sell_date = self._last_sell_dates[code]
+            days_since_sell = (ctx.date - last_sell_date).days
+            if days_since_sell < self.cooldown_days:
+                self.logger.debug(
+                    "In cooldown period",
+                    code=code,
+                    days_since_sell=days_since_sell,
+                    cooldown_days=self.cooldown_days,
+                )
+                return False
+        
+        # 检查交易频率限制
+        date_str = ctx.date.strftime("%Y-%m-%d")
+        if date_str in self._daily_trade_counts:
+            if self._daily_trade_counts[date_str] >= self.max_trades_per_day:
+                self.logger.debug(
+                    "Max trades per day reached",
+                    date=date_str,
+                    trades=self._daily_trade_counts[date_str],
+                    max_trades=self.max_trades_per_day,
+                )
+                return False
+        
+        # 从self._prepared_data中获取该股票的历史数据
+        if self._prepared_data is not None:
+            code_data = self._prepared_data[self._prepared_data["code"] == code]
+            score = self.score_stock(code, code_data)
+        else:
+            # 如果没有准备数据，使用默认评分
+            score = 50.0
         
         if score < self.min_score_threshold:
             self.logger.debug(
@@ -158,7 +200,7 @@ class BaseStrategy(ABC):
     ) -> bool:
         return False
     
-    def execute(self, df: pd.DataFrame, ctx: StrategyContext) -> dict[str, Any]:
+    def execute(self, df: pd.DataFrame, ctx: StrategyContext, current_date: datetime | None = None) -> dict[str, Any]:
         self.logger.info(
             "Executing strategy",
             strategy=self.strategy_name,
@@ -178,24 +220,53 @@ class BaseStrategy(ABC):
         buy_signals = []
         sell_signals = []
         
-        for code in prepared_df["code"].unique():
-            code_data = prepared_df[prepared_df["code"] == code]
+        # 如果指定了当前交易日，则只处理当前交易日的数据
+        if current_date is not None:
+            # 筛选出当前交易日的股票代码
+            current_date_df = prepared_df[prepared_df["date"] == current_date]
+            current_codes = current_date_df["code"].unique()
             
-            if code_data.empty:
-                continue
-            
-            latest_data = code_data.iloc[-1]
-            
-            score = self.score_stock(code, latest_data)
-            scores[code] = score
-            
-            if code in ctx.positions:
-                position = ctx.positions[code]
-                if self.should_sell(code, latest_data, position, ctx):
-                    sell_signals.append(code)
-            else:
-                if self.should_buy(code, latest_data, ctx):
-                    buy_signals.append((code, score))
+            for code in current_codes:
+                # 获取该股票的历史数据（用于计算动态评分）
+                code_data = prepared_df[prepared_df["code"] == code]
+                
+                if code_data.empty:
+                    continue
+                
+                # 计算评分（传入整个DataFrame，而不是只传入最新一天的数据）
+                score = self.score_stock(code, code_data)
+                scores[code] = score
+                
+                # 获取最新一天的数据
+                latest_data = code_data.iloc[-1]
+                
+                if code in ctx.positions:
+                    position = ctx.positions[code]
+                    if self.should_sell(code, latest_data, position, ctx):
+                        sell_signals.append(code)
+                else:
+                    if self.should_buy(code, latest_data, ctx):
+                        buy_signals.append((code, score))
+        else:
+            # 如果没有指定当前交易日，则处理所有股票的最新数据（兼容旧的逻辑）
+            for code in prepared_df["code"].unique():
+                code_data = prepared_df[prepared_df["code"] == code]
+                
+                if code_data.empty:
+                    continue
+                
+                latest_data = code_data.iloc[-1]
+                
+                score = self.score_stock(code, code_data)
+                scores[code] = score
+                
+                if code in ctx.positions:
+                    position = ctx.positions[code]
+                    if self.should_sell(code, latest_data, position, ctx):
+                        sell_signals.append(code)
+                else:
+                    if self.should_buy(code, latest_data, ctx):
+                        buy_signals.append((code, score))
         
         buy_signals.sort(key=lambda x: x[1], reverse=True)
         

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Literal
 
 import numpy as np
@@ -8,6 +8,37 @@ import pandas as pd
 from src.core.config import config_loader
 from src.core.logger import get_logger
 from src.strategy.base_strategy import BaseStrategy, Position, StrategyContext
+from src.backtest.slippage import (
+    SlippageModel,
+    FixedSlippageModel,
+    VolumeBasedSlippageModel,
+)
+
+
+class TradingCalendarFilter:
+    
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self._trading_days: set[pd.Timestamp] | None = None
+    
+    def set_trading_days(self, trading_days: pd.DataFrame) -> None:
+        if "date" in trading_days.columns and not trading_days.empty:
+            self._trading_days = set(pd.to_datetime(trading_days["date"]))
+        else:
+            self._trading_days = None
+    
+    def filter_dates(self, dates: list[datetime]) -> list[datetime]:
+        if not self.enabled or self._trading_days is None:
+            return dates
+        
+        return [d for d in dates if pd.to_datetime(d) in self._trading_days]
+    
+    def is_trading_day(self, check_date: datetime | date) -> bool:
+        if not self.enabled or self._trading_days is None:
+            return True
+        
+        check_dt = pd.to_datetime(check_date)
+        return check_dt in self._trading_days
 
 
 @dataclass
@@ -20,6 +51,8 @@ class Transaction:
     commission: float
     amount: float
     reason: str = ""
+    total_value: float = 0.0  # 每笔交易完成后的账户总金额数
+    profit: float = 0.0  # 每笔交易的盈利（买入为0，卖出为盈亏）
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +64,8 @@ class Transaction:
             "commission": self.commission,
             "amount": self.amount,
             "reason": self.reason,
+            "total_value": self.total_value,
+            "profit": self.profit,
         }
 
 
@@ -62,6 +97,7 @@ class BacktestResult:
     total_trades: int
     winning_trades: int
     losing_trades: int
+    total_slippage_cost: float = 0.0
     transactions: list[Transaction] = field(default_factory=list)
     portfolio_states: list[PortfolioState] = field(default_factory=list)
     
@@ -75,6 +111,7 @@ class BacktestResult:
             "total_trades": self.total_trades,
             "winning_trades": self.winning_trades,
             "losing_trades": self.losing_trades,
+            "total_slippage_cost": self.total_slippage_cost,
         }
 
 
@@ -87,6 +124,9 @@ class BacktestEngine:
         commission_rate: float | None = None,
         stamp_duty_rate: float | None = None,
         min_commission: float | None = None,
+        trading_calendar=None,
+        use_trading_calendar: bool = True,
+        slippage_model: SlippageModel | None = None,
     ):
         config = config_loader.get("backtest", {})
         
@@ -103,6 +143,39 @@ class BacktestEngine:
         self.positions: dict[str, Position] = {}
         self.transactions: list[Transaction] = []
         self.portfolio_states: list[PortfolioState] = []
+        
+        self.trading_calendar = trading_calendar
+        self.use_trading_calendar = use_trading_calendar
+        self._calendar_filter = TradingCalendarFilter(enabled=use_trading_calendar)
+        
+        if slippage_model is not None:
+            self.slippage_model = slippage_model
+        else:
+            default_slippage_rate = config.get("slippage_rate", 0.001)
+            self.slippage_model = FixedSlippageModel(slippage_rate=default_slippage_rate)
+        
+        self.total_slippage_cost = 0.0
+    
+    def _setup_calendar_filter(self, df: pd.DataFrame) -> None:
+        if not self.use_trading_calendar or self.trading_calendar is None:
+            return
+        
+        try:
+            trading_days = self.trading_calendar.load_trading_days()
+            if not trading_days.empty:
+                self._calendar_filter.set_trading_days(trading_days)
+                date_range = f"{df['date'].min()} to {df['date'].max()}"
+                self.logger.info(
+                    "Trading calendar filter enabled",
+                    total_calendar_days=len(trading_days),
+                    backtest_range=date_range,
+                )
+        except Exception as e:
+            self.logger.warning(
+                "Failed to setup trading calendar filter, proceeding without it",
+                error=str(e),
+            )
+            self._calendar_filter.enabled = False
     
     def run(self, df: pd.DataFrame) -> BacktestResult:
         self.logger.info(
@@ -112,8 +185,13 @@ class BacktestEngine:
         )
         
         self._validate_data(df)
+        self._setup_calendar_filter(df)
         
         dates = sorted(df["date"].unique())
+        
+        if self._calendar_filter.enabled:
+            dates = self._calendar_filter.filter_dates(dates)
+            self.logger.info("Trading calendar filter applied", filtered_dates=len(dates))
         
         for date in dates:
             self._process_date(df, date)
@@ -159,7 +237,8 @@ class BacktestEngine:
             total_assets=self._calculate_total_value(date_df),
         )
         
-        result = self.strategy.execute(date_df, ctx)
+        # 传入全量股票数据，而不是只传入当天的数据
+        result = self.strategy.execute(df, ctx, date)
         
         for code in result["sell_signals"]:
             self._execute_sell(code, date_df, date)
@@ -182,34 +261,68 @@ class BacktestEngine:
         price = stock_data.iloc[0]["close_price"]
         shares = position.shares
         
-        amount = price * shares
+        volume = int(stock_data.iloc[0].get("volume", 0))
+        slippage_result = self.slippage_model.calculate(price, volume)
+        sell_price = price - slippage_result.slippage
+        self.total_slippage_cost += slippage_result.slippage * shares
+        
+        amount = sell_price * shares
         commission = max(amount * self.commission_rate, self.min_commission)
         stamp_duty = amount * self.stamp_duty_rate
         
         total_cost = commission + stamp_duty
         
+        # 计算盈利：(卖出价 - 买入价) * 股票数量
+        profit = (sell_price - position.cost_price) * shares
+        
         self.capital += amount - total_cost
+        
+        # 计算账户总金额数：余额 + 剩余持仓的市值
+        positions_value = 0.0
+        for c, pos in self.positions.items():
+            if c != code:  # 排除当前卖出的股票
+                stock_data_pos = date_df[date_df["code"] == c]
+                if not stock_data_pos.empty:
+                    current_price = stock_data_pos.iloc[0]["close_price"]
+                    positions_value += pos.shares * current_price
+        
+        total_value = self.capital + positions_value
         
         transaction = Transaction(
             date=date,
             code=code,
             action="SELL",
-            price=price,
+            price=sell_price,
             shares=int(shares),
             commission=total_cost,
             amount=amount,
             reason="Strategy signal",
+            total_value=total_value,
+            profit=profit,
         )
         self.transactions.append(transaction)
+        
+        # 记录卖出日期（用于冷却期）
+        self.strategy._last_sell_dates[code] = date
+        
+        # 更新交易次数（用于交易频率限制）
+        date_str = date.strftime("%Y-%m-%d")
+        if date_str not in self.strategy._daily_trade_counts:
+            self.strategy._daily_trade_counts[date_str] = 0
+        self.strategy._daily_trade_counts[date_str] += 1
         
         del self.positions[code]
         
         self.logger.info(
             "Executed sell",
             code=code,
-            price=price,
+            price=sell_price,
+            original_price=price,
+            slippage=slippage_result.slippage,
             shares=shares,
             amount=amount,
+            profit=profit,
+            total_value=total_value,
         )
     
     def _execute_buy(self, code: str, date_df: pd.DataFrame, date: datetime) -> None:
@@ -222,13 +335,18 @@ class BacktestEngine:
         
         price = stock_data.iloc[0]["close_price"]
         
+        volume = int(stock_data.iloc[0].get("volume", 0))
+        slippage_result = self.slippage_model.calculate(price, volume)
+        buy_price = price + slippage_result.slippage
+        self.total_slippage_cost += slippage_result.slippage * 100
+        
         max_position_value = self.capital * self.strategy.max_position_pct / 100
-        max_shares = int(max_position_value / price / 100) * 100
+        max_shares = int(max_position_value / buy_price / 100) * 100
         
         if max_shares == 0:
             return
         
-        amount = price * max_shares
+        amount = buy_price * max_shares
         commission = max(amount * self.commission_rate, self.min_commission)
         
         total_cost = amount + commission
@@ -241,31 +359,52 @@ class BacktestEngine:
         position = Position(
             code=code,
             shares=float(max_shares),
-            cost_price=price,
+            cost_price=buy_price,
             current_price=price,
             buy_date=date,
             holding_days=0,
         )
         self.positions[code] = position
         
+        # 计算账户总金额数：余额 + 持仓的市值
+        positions_value = 0.0
+        for c, pos in self.positions.items():
+            stock_data_pos = date_df[date_df["code"] == c]
+            if not stock_data_pos.empty:
+                current_price = stock_data_pos.iloc[0]["close_price"]
+                positions_value += pos.shares * current_price
+        
+        total_value = self.capital + positions_value
+        
         transaction = Transaction(
             date=date,
             code=code,
             action="BUY",
-            price=price,
+            price=buy_price,
             shares=max_shares,
             commission=commission,
             amount=amount,
             reason="Strategy signal",
+            total_value=total_value,
+            profit=0.0,  # 买入时盈利为0
         )
         self.transactions.append(transaction)
+        
+        # 更新交易次数（用于交易频率限制）
+        date_str = date.strftime("%Y-%m-%d")
+        if date_str not in self.strategy._daily_trade_counts:
+            self.strategy._daily_trade_counts[date_str] = 0
+        self.strategy._daily_trade_counts[date_str] += 1
         
         self.logger.info(
             "Executed buy",
             code=code,
-            price=price,
+            price=buy_price,
+            original_price=price,
+            slippage=slippage_result.slippage,
             shares=max_shares,
             amount=amount,
+            total_value=total_value,
         )
     
     def _calculate_total_value(self, date_df: pd.DataFrame) -> float:
@@ -336,6 +475,7 @@ class BacktestEngine:
             total_trades=len(self.transactions),
             winning_trades=winning_trades,
             losing_trades=losing_trades,
+            total_slippage_cost=self.total_slippage_cost,
             transactions=self.transactions,
             portfolio_states=self.portfolio_states,
         )

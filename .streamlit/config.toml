@@ -1,0 +1,21 @@
+[theme]
+# 设置默认主题为dark模式
+base = "dark"
+
+# 设置主题颜色（可选，如果需要自定义颜色）
+# primaryColor = "#4ECDC4"
+# backgroundColor = "#1a1a2e"
+# secondaryBackgroundColor = "#16213e"
+# textColor = "#eaeaea"
+# font = "sans serif"
+
+[server]
+# 设置服务器端口（可选）
+# port = 8501
+
+# 设置服务器地址（可选）
+# address = "localhost"
+
+[runner]
+# 设置运行器配置（可选）
+# magicEnabled = false

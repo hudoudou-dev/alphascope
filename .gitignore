@@ -46,6 +46,8 @@ data/*.parquet
 *.tmp
 
 # 忽略 IDE 相关文件
+.mobile-coder/
+.zhanlu/
 .idea/
 .vscode/
 *.suo
@@ -71,3 +73,6 @@ config/credentials.json
 
 # 忽略测试数据目录
 test_data/
+
+# 忽略测试用例
+tests/

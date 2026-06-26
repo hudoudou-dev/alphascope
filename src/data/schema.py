@@ -2,35 +2,6 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
-from pydantic import BaseModel, Field, field_validator
-
-
-class BarDataSchema(BaseModel):
-    date: datetime
-    open_price: float = Field(..., gt=0)
-    high_price: float = Field(..., gt=0)
-    low_price: float = Field(..., gt=0)
-    close_price: float = Field(..., gt=0)
-    volume: float = Field(..., ge=0)
-    amount: float = Field(..., ge=0)
-    code: str
-    name: str | None = None
-    pct_chg: float | None = None
-    turn: float | None = None
-    
-    @field_validator("high_price")
-    @classmethod
-    def validate_high_price(cls, v: float, info: Any) -> float:
-        if "low_price" in info.data and v < info.data["low_price"]:
-            raise ValueError("high_price must be >= low_price")
-        return v
-    
-    @field_validator("date")
-    @classmethod
-    def validate_date(cls, v: datetime) -> datetime:
-        if v > datetime.now():
-            raise ValueError("Future date is not allowed")
-        return v
 
 
 class DataValidator:

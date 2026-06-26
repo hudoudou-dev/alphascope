@@ -90,6 +90,7 @@ class BaseDataProvider(ABC):
             storage_path = config.get("storage", {}).get("base_path", "./data")
         
         self.storage_path = Path(storage_path)
+        self.raw_path = self.storage_path / "raw"
         self.processed_path = self.storage_path / "processed"
         
         self.compression = compression
@@ -108,6 +109,7 @@ class BaseDataProvider(ABC):
         self.logger = get_logger(self.__class__.__name__)
         
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.raw_path.mkdir(parents=True, exist_ok=True)
         self.processed_path.mkdir(parents=True, exist_ok=True)
     
     @abstractmethod
@@ -343,24 +345,33 @@ class BaseDataProvider(ABC):
             df: 待保存的数据
             code: 股票代码
             processed: 是否为预处理数据
+        
+        Note:
+            - 如果 DataFrame 中包含 'name' 字段，则使用包含股票名称的文件命名
+            - 文件命名格式：{code}.{stock_name}.parquet 或 {code}.parquet
         """
         if df.empty:
             return
         
-        file_path = self._get_parquet_path(code, processed=processed)
+        # 从 DataFrame 中提取股票名称
+        stock_name = ""
+        if "name" in df.columns and not df.empty:
+            stock_name = df.iloc[0]["name"]
+        
+        file_path = self._get_parquet_path(code, stock_name=stock_name, processed=processed)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        table = pa.Table.from_pandas(df, preserve_index=False)
-        
-        pq.write_table(
-            table,
+        df.to_parquet(
             file_path,
-            compression=self.compression,
+            engine="pyarrow",
+            compression="snappy",
+            index=False,
         )
         
-        self.logger.debug(
+        self.logger.info(
             "Data saved to parquet",
             file_path=str(file_path),
+            rows=len(df),
             processed=processed,
         )
     
@@ -389,27 +400,34 @@ class BaseDataProvider(ABC):
         
         return df
     
-    def _get_parquet_path(self, code: str, processed: bool = False) -> Path:
+    def _get_parquet_path(self, code: str, stock_name: str = "", processed: bool = False) -> Path:
         """
         获取 Parquet 文件路径
         
         Args:
             code: 股票代码
+            stock_name: 股票名称（可选）
             processed: 是否为预处理数据
         
         Returns:
             Path: 文件路径
         
         Note:
-            - 原始数据: ./data/{code}.parquet
-            - 预处理数据: ./data/processed/{code}.parquet
+            - 原始数据: ./data/raw/{code}.{stock_name}.parquet 或 ./data/raw/{code}.parquet
+            - 预处理数据: ./data/processed/{code}.{stock_name}.parquet 或 ./data/processed/{code}.parquet
         """
         normalized_code = self._normalize_code(code)
         
-        if processed:
-            return self.processed_path / f"{normalized_code}.parquet"
+        # 如果有股票名称，则使用包含股票名称的文件命名
+        if stock_name:
+            filename = f"{normalized_code}.{stock_name}.parquet"
         else:
-            return self.storage_path / f"{normalized_code}.parquet"
+            filename = f"{normalized_code}.parquet"
+        
+        if processed:
+            return self.processed_path / filename
+        else:
+            return self.raw_path / filename
     
     def _normalize_code(self, code: str) -> str:
         """
@@ -445,7 +463,8 @@ class BaseDataProvider(ABC):
         Returns:
             list[str]: 股票代码列表
         """
-        base_path = self.processed_path if processed else self.storage_path
+        # 修复：使用正确的路径（raw 或 processed）
+        base_path = self.processed_path if processed else self.raw_path
         parquet_files = list(base_path.glob("*.parquet"))
         
         return [file.stem for file in parquet_files]

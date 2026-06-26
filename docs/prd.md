@@ -2,7 +2,7 @@
  * @Author: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
  * @Date: 2026-05-21 17:18:15
  * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-05-21 17:56:47
+ * @LastEditTime: 2026-05-26 16:41:07
  * @FilePath: /alphascope/docs/prd.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -296,52 +296,3 @@ A股不是每天交易。必须支持：
 ---
 
 
-
-
-
-├── specs/
-│
-│   ├── constitution.md
-│   ├── specify.md
-│
-│   ├── contracts/
-│   │
-│   │   ├── data_contract.md
-│   │   ├── strategy_contract.md
-│   │   ├── backtest_contract.md
-│   │   ├── notification_contract.md
-│   │   ├── api_contract.md
-│   │   └── plugin_contract.md
-│   │
-│   ├── schemas/
-│   │
-│   │   ├── strategy.schema.yaml
-│   │   ├── backtest.schema.yaml
-│   │   ├── data.schema.yaml
-│   │   ├── scheduler.schema.yaml
-│   │   ├── notification.schema.yaml
-│   │   └── storage.schema.yaml
-│   │
-│   ├── standards/
-│   │
-│   │   ├── coding_standard.md
-│   │   ├── logging_standard.md
-│   │   ├── testing_standard.md
-│   │   ├── naming_standard.md
-│   │   ├── git_standard.md
-│   │   └── ai_generation_standard.md
-│   │
-│   ├── prompts/
-│   │
-│   │   ├── strategy_generation.md
-│   │   ├── factor_generation.md
-│   │   ├── backtest_generation.md
-│   │   ├── code_review.md
-│   │   └── bugfix.md
-│   │
-│   └── examples/
-│       ├── strategy_example.yaml
-│       ├── backtest_example.yaml
-│       ├── parquet_example.md
-│       └── replay_example.md
-│
