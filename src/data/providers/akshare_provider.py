@@ -119,7 +119,27 @@ class AKShareProvider(BaseDataProvider):
                     error=str(e),
                 )
         
-        # 如果缓存加载失败或找不到，返回空字符串
+        # 如果缓存加载失败或找不到，尝试从其他API获取股票名称
+        try:
+            # 使用 stock_individual_info_em 获取股票信息
+            df = ak.stock_individual_info_em(symbol=pure_code)
+            if not df.empty:
+                # 从DataFrame中获取股票名称
+                for _, row in df.iterrows():
+                    if row.get("item") == "股票简称":
+                        stock_name = row.get("value", "")
+                        if stock_name:
+                            # 将股票名称添加到缓存
+                            AKShareProvider._stock_name_cache[pure_code] = stock_name
+                            return stock_name
+        except Exception as e:
+            self.logger.warning(
+                "Failed to get stock name from individual info",
+                code=pure_code,
+                error=str(e),
+            )
+        
+        # 如果所有方法都失败，返回空字符串
         return ""
     
     def _normalize_columns(self, df: pd.DataFrame, code: str) -> pd.DataFrame:

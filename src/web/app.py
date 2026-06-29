@@ -687,43 +687,67 @@ def render_data_download():
         # 在进度区域内显示进度信息
         with progress_placeholder.container():
             if manager.progress.total > 0:
+                # 进度条
                 progress_bar = st.progress(manager.progress.progress_pct / 100)
                 
-                col_stat1, col_stat2, col_stat3 = st.columns(3)
-                with col_stat1:
-                    st.metric("总数", manager.progress.total)
-                with col_stat2:
-                    st.metric("已完成", manager.progress.completed)
-                with col_stat3:
-                    st.metric("失败", manager.progress.failed)
+                # 进度百分比
+                st.text(f"下载进度: {manager.progress.completed}/{manager.progress.total} ({manager.progress.progress_pct:.1f}%)")
                 
+                # 当前下载的股票信息
                 if manager.progress.current_code:
-                    st.info(f"正在下载: {manager.progress.current_code} ({manager.progress.current_provider})")
+                    # 从股票代码中提取纯代码
+                    pure_code = manager.progress.current_code.split(".")[0] if "." in manager.progress.current_code else manager.progress.current_code
+                    
+                    # 尝试从缓存中获取股票名称
+                    stock_name = ""
+                    try:
+                        from src.data.providers.akshare_provider import AKShareProvider
+                        if pure_code in AKShareProvider._stock_name_cache:
+                            stock_name = AKShareProvider._stock_name_cache[pure_code]
+                    except:
+                        pass
+                    
+                    if stock_name:
+                        st.info(f"正在下载: {manager.progress.current_code} ({stock_name})")
+                    else:
+                        st.info(f"正在下载: {manager.progress.current_code}")
                 
-                if manager.progress.start_time:
-                    st.info(f"预计剩余时间: {manager.progress.eta}")
+                # 下载完成后展示统计信息
+                if not manager.is_running and manager.progress.completed + manager.progress.failed == manager.progress.total:
+                    st.markdown("---")
+                    st.subheader("📊 下载完成统计")
+                    
+                    col_stat1, col_stat2, col_stat3 = st.columns(3)
+                    with col_stat1:
+                        st.metric("总数", manager.progress.total)
+                    with col_stat2:
+                        st.metric("已完成", manager.progress.completed)
+                    with col_stat3:
+                        st.metric("失败", manager.progress.failed)
+                    
+                    # 展示下载失败的股票代码清单
+                    if manager.progress.failed > 0:
+                        st.markdown("---")
+                        st.subheader("❌ 下载失败的股票")
+                        
+                        # 从日志中提取失败的股票代码
+                        failed_codes = []
+                        for log in manager.progress.logs:
+                            if "[ERROR]" in log and "下载失败" in log:
+                                # 提取股票代码（格式：[ERROR] 300558 下载失败...）
+                                parts = log.split()
+                                if len(parts) >= 2:
+                                    failed_codes.append(parts[1])
+                        
+                        if failed_codes:
+                            st.error(f"下载失败的股票代码：{', '.join(failed_codes)}")
             else:
                 st.info("暂无下载任务")
         
-        st.markdown("---")
-        
-        st.subheader("📝 下载日志")
-        log_container = st.empty()
-        
-        # 在日志区域内显示日志（局部刷新）
-        with log_container.container():
-            if manager.progress.logs:
-                for log in list(manager.progress.logs)[-20:]:
-                    if "[SUCCESS]" in log:
-                        st.success(log)
-                    elif "[WARNING]" in log:
-                        st.warning(log)
-                    elif "[ERROR]" in log:
-                        st.error(log)
-                    else:
-                        st.text(log)
-            else:
-                st.info("暂无下载日志")
+        # 如果下载正在进行中，自动刷新页面（每2秒刷新一次）
+        if manager.is_running:
+            time.sleep(2)
+            st.rerun()
     
     if start_btn and codes:
         manager.start_download(
@@ -732,8 +756,6 @@ def render_data_download():
             end_date=datetime.combine(end_date, datetime.min.time()),
             adjust=adjust,
         )
-        st.success(f"已启动下载任务，共 {len(codes)} 只股票")
-        time.sleep(0.5)  # 等待500ms让下载线程启动
         st.rerun()  # 立即刷新页面，显示下载进度
     
     if stop_btn:
@@ -1480,7 +1502,7 @@ def render_strategy_config():
         top_n = st.slider(
             "候选股票数量（Top-N）",
             min_value=5,
-            max_value=50,
+            max_value=20,
             value=selection_config.top_n,
             help="选股策略输出的候选股票数量",
         )
@@ -1652,7 +1674,7 @@ def render_stock_selection_result():
     # 从配置文件读取选股策略配置
     selection_config = SelectionConfig.from_config()
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric("初始资金量", f"{selection_config.initial_cash:,} 元")
@@ -1665,6 +1687,10 @@ def render_stock_selection_result():
     with col3:
         st.metric("市值区间", f"{selection_config.market_cap_min}-{selection_config.market_cap_max} 亿元")
         st.metric("股价区间", f"{selection_config.price_min}-{selection_config.price_max} 元")
+    
+    with col4:
+        st.metric("涨跌停统计周期", f"{selection_config.limit_stat_period} 天")
+        st.metric("最大涨幅阈值", f"{selection_config.max_up_threshold}%")
     
     st.markdown("---")
     
@@ -1744,6 +1770,9 @@ def render_stock_selection_result():
                 # 准备数据（计算技术指标）
                 df = strategy.prepare(df)
                 
+                # 只保留最近limit_stat_period天的数据（用于评分）
+                df_recent = df.tail(selection_config.limit_stat_period)
+                
                 # 获取最新数据
                 latest = df.iloc[-1]
                 
@@ -1751,8 +1780,8 @@ def render_stock_selection_result():
                 if not strategy.filter_stock(latest, df):
                     continue
                 
-                # 计算评分（使用新的选股策略，传入整个DataFrame）
-                score = strategy.score_stock(file.stem, df)
+                # 计算评分（使用新的选股策略，只传入最近limit_stat_period天的数据）
+                score = strategy.score_stock(file.stem, df_recent)
                 
                 # 获取最新收盘价和涨跌幅
                 latest_close = latest.get("close_price", 0)
@@ -1885,7 +1914,7 @@ def render_backtest_display():
         max_positions = st.slider(
             "最大持仓数",
             min_value=1,
-            max_value=20,
+            max_value=50,
             value=10,
             help="最大持仓股票数量",
         )

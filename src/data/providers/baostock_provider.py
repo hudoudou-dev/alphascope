@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+import akshare as ak
 import baostock as bs
 import pandas as pd
 
@@ -8,6 +9,10 @@ from src.data.providers.base_data_provider import BaseDataProvider
 
 
 class BaoStockProvider(BaseDataProvider):
+    
+    # 股票名称缓存
+    _stock_name_cache: dict[str, str] = {}
+    _cache_loaded: bool = False
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -82,6 +87,14 @@ class BaoStockProvider(BaseDataProvider):
             df = pd.DataFrame(data_list, columns=rs.fields)
             
             df = self._normalize_columns(df, code)
+            
+            # 获取股票名称（使用缓存，避免每次都调用 API）
+            pure_code = code.split(".")[0] if "." in code else code
+            stock_name = self._get_stock_name_cached(pure_code)
+            
+            # 添加股票名称字段
+            if stock_name:
+                df["name"] = stock_name
             
             return df
             
@@ -162,6 +175,68 @@ class BaoStockProvider(BaseDataProvider):
         df = df[available_fields + [f for f in df.columns if f not in required_fields]]
         
         return df
+    
+    def _get_stock_name_cached(self, pure_code: str) -> str:
+        """
+        获取股票名称（使用缓存）
+        
+        Args:
+            pure_code: 纯股票代码（不带交易所后缀）
+        
+        Returns:
+            str: 股票名称
+        """
+        # 如果缓存已加载，直接从缓存中获取
+        if BaoStockProvider._cache_loaded and pure_code in BaoStockProvider._stock_name_cache:
+            return BaoStockProvider._stock_name_cache[pure_code]
+        
+        # 如果缓存未加载，尝试加载缓存
+        if not BaoStockProvider._cache_loaded:
+            try:
+                # 使用 akshare 的 stock_info_a_code_name 获取股票代码和名称列表
+                df = ak.stock_info_a_code_name()
+                
+                # 构建缓存
+                for _, row in df.iterrows():
+                    code = row.get("code", "")
+                    name = row.get("name", "")
+                    if code and name:
+                        BaoStockProvider._stock_name_cache[code] = name
+                
+                BaoStockProvider._cache_loaded = True
+                
+                # 从缓存中获取
+                if pure_code in BaoStockProvider._stock_name_cache:
+                    return BaoStockProvider._stock_name_cache[pure_code]
+            
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to load stock name cache",
+                    error=str(e),
+                )
+        
+        # 如果缓存加载失败或找不到，尝试从其他API获取股票名称
+        try:
+            # 使用 akshare 的 stock_individual_info_em 获取股票信息
+            df = ak.stock_individual_info_em(symbol=pure_code)
+            if not df.empty:
+                # 从DataFrame中获取股票名称
+                for _, row in df.iterrows():
+                    if row.get("item") == "股票简称":
+                        stock_name = row.get("value", "")
+                        if stock_name:
+                            # 将股票名称添加到缓存
+                            BaoStockProvider._stock_name_cache[pure_code] = stock_name
+                            return stock_name
+        except Exception as e:
+            self.logger.warning(
+                "Failed to get stock name from individual info",
+                code=pure_code,
+                error=str(e),
+            )
+        
+        # 如果所有方法都失败，返回空字符串
+        return ""
     
     def get_stock_list(self) -> list[str]:
         self._login()
