@@ -177,7 +177,7 @@ class BacktestEngine:
             )
             self._calendar_filter.enabled = False
     
-    def run(self, df: pd.DataFrame) -> BacktestResult:
+    def run(self, df: pd.DataFrame, progress_callback=None) -> BacktestResult:
         self.logger.info(
             "Starting backtest",
             initial_cash=self.initial_cash,
@@ -193,8 +193,11 @@ class BacktestEngine:
             dates = self._calendar_filter.filter_dates(dates)
             self.logger.info("Trading calendar filter applied", filtered_dates=len(dates))
         
-        for date in dates:
+        total_dates = len(dates)
+        for i, date in enumerate(dates):
             self._process_date(df, date)
+            if progress_callback is not None:
+                progress_callback(i + 1, total_dates)
         
         result = self._calculate_result()
         

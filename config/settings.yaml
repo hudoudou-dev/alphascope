@@ -161,4 +161,15 @@ logging:
   format: json
   timezone: Asia/Shanghai
 
+cache:
+  redis:
+    host: localhost
+    port: 6379
+    db: 0
+  ttl:
+    stock_list: 60
+    stock_detail: 300
+    strategy_config: 30
+    selection_result: 300
+
 timezone: Asia/Shanghai

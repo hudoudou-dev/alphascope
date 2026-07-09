@@ -26,15 +26,12 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from src.backtest.backtest_engine import BacktestEngine, BacktestResult
-from src.backtest.slippage import FixedSlippageModel, VolumeBasedSlippageModel
-from src.calendar.trading_calendar import TradingCalendarService
 from src.core.config import config_loader
 from src.core.logger import get_logger
 from src.data.providers.akshare_provider import AKShareProvider
 from src.data.providers.baostock_provider import BaoStockProvider
 from src.data.providers.tushare_provider import TushareProvider
 from src.indicators.technical_indicators import TechnicalIndicators
-from src.strategy.base_strategy import BaseStrategy
 from src.web.utils import normalize_stock_code
 
 
@@ -326,7 +323,8 @@ class DownloadManager:
             self.is_running = False
 
 
-def generate_sample_data(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+def generate_sample_data(start_date: datetime, end_date: datetime, seed: int = 42) -> pd.DataFrame:
+    np.random.seed(seed)
     dates = pd.date_range(start=start_date, end=end_date, freq="D")
     
     data = []
@@ -344,6 +342,95 @@ def generate_sample_data(start_date: datetime, end_date: datetime) -> pd.DataFra
         })
     
     return pd.DataFrame(data)
+
+
+def get_raw_data_path() -> Path:
+    base_path = config_loader.get("data.storage.base_path", "./data")
+    return Path(base_path) / "raw"
+
+
+def get_processed_data_path() -> Path:
+    base_path = config_loader.get("data.storage.base_path", "./data")
+    return Path(base_path) / "processed"
+
+
+def render_kline_chart(df: pd.DataFrame, title: str, show_ma: bool = True, ma_periods: list[int] | None = None, show_volume: bool = True):
+    if ma_periods is None:
+        ma_periods = [5, 20]
+
+    fig = make_subplots(
+        rows=2 if show_volume else 1,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.7, 0.3] if show_volume else [1.0],
+    )
+
+    fig.add_trace(
+        go.Candlestick(
+            x=df["date"],
+            open=df["open_price"],
+            high=df["high_price"],
+            low=df["low_price"],
+            close=df["close_price"],
+            name="K线",
+        ),
+        row=1,
+        col=1,
+    )
+
+    if show_ma and ma_periods:
+        indicators = TechnicalIndicators()
+        df = indicators.add_ma(df, periods=ma_periods)
+
+        colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A"]
+        for i, period in enumerate(ma_periods):
+            fig.add_trace(
+                go.Scatter(
+                    x=df["date"],
+                    y=df[f"ma{period}"],
+                    mode="lines",
+                    name=f"MA{period}",
+                    line=dict(color=colors[i % len(colors)], width=1),
+                ),
+                row=1,
+                col=1,
+            )
+
+    if show_volume:
+        fig.add_trace(
+            go.Bar(
+                x=df["date"],
+                y=df["volume"],
+                name="成交量",
+                marker_color="rgba(76, 175, 80, 0.5)",
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        title=title,
+        yaxis_title="价格",
+        xaxis_rangeslider_visible=False,
+        height=600,
+        template="plotly_dark",
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1月", step="month", stepmode="backward"),
+                    dict(count=3, label="3月", step="month", stepmode="backward"),
+                    dict(count=6, label="6月", step="month", stepmode="backward"),
+                    dict(count=1, label="1年", step="year", stepmode="backward"),
+                    dict(step="all", label="全部"),
+                ])
+            ),
+            rangeslider=dict(visible=False),
+            type="date",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def init_session_state():
@@ -528,7 +615,7 @@ def render_data_download():
             
             # 显示股票数据状态
             if codes:
-                raw_path = Path("./data/raw")
+                raw_path = get_raw_data_path()
                 for code in codes:
                     # 从完整代码中提取纯代码（去掉交易所后缀）
                     pure_code = code.split(".")[0] if "." in code else code
@@ -584,7 +671,7 @@ def render_data_download():
             
             # 显示批量股票数据状态
             if codes:
-                raw_path = Path("./data/raw")
+                raw_path = get_raw_data_path()
                 existing_count = 0
                 new_count = 0
                 
@@ -605,11 +692,17 @@ def render_data_download():
         else:
             st.info("全量下载将下载所有A股股票数据（主板/创业板/科创板）")
             if st.checkbox("确认全量下载"):
-                # TODO: 实现全量股票列表获取
-                codes = ["600000.SH", "000001.SZ", "300750.SZ"]
+                try:
+                    with st.spinner("正在获取全量A股股票列表..."):
+                        provider = AKShareProvider()
+                        codes = provider.get_stock_list()
+                    st.info(f"📊 已获取 {len(codes)} 只A股股票列表")
+                except Exception as e:
+                    st.error(f"获取全量股票列表失败: {str(e)}")
+                    codes = []
                 
                 # 显示全量股票数据状态
-                raw_path = Path("./data/raw")
+                raw_path = get_raw_data_path()
                 existing_count = 0
                 new_count = 0
                 
@@ -704,7 +797,7 @@ def render_data_download():
                         from src.data.providers.akshare_provider import AKShareProvider
                         if pure_code in AKShareProvider._stock_name_cache:
                             stock_name = AKShareProvider._stock_name_cache[pure_code]
-                    except:
+                    except Exception:
                         pass
                     
                     if stock_name:
@@ -776,8 +869,8 @@ def render_stock_overview():
     st.header("📊 股票走势概览")
     
     # 检查原始数据目录
-    raw_path = Path("./data/raw")
-    processed_path = Path("./data/processed")
+    raw_path = get_raw_data_path()
+    processed_path = get_processed_data_path()
     
     if not raw_path.exists():
         st.warning("原始数据目录不存在，请先在'股票数据更新'页面下载数据")
@@ -935,13 +1028,13 @@ def render_stock_overview():
     st.subheader("📈 K线图可视化")
     
     if selected_stock:
-        # K线图配置
         col1, col2 = st.columns([1, 3])
         
         with col1:
             st.markdown("**⚙️ 图表配置**")
             
             show_ma = st.checkbox("显示均线", value=True)
+            ma_periods = [5, 20]
             if show_ma:
                 ma_periods = st.multiselect(
                     "均线周期",
@@ -950,7 +1043,6 @@ def render_stock_overview():
                 )
             
             show_volume = st.checkbox("显示成交量", value=True)
-            show_macd = st.checkbox("显示MACD", value=False)
         
         with col2:
             file_path = raw_path / f"{selected_stock}.parquet"
@@ -964,285 +1056,18 @@ def render_stock_overview():
                 
                 df["date"] = pd.to_datetime(df["date"])
                 
-                # 获取股票名称
                 stock_name = ""
                 if "name" in df.columns and not df.empty:
                     stock_name = df.iloc[0]["name"]
                 
-                # 创建K线图
-                fig = make_subplots(
-                    rows=2 if show_volume else 1,
-                    cols=1,
-                    shared_xaxes=True,
-                    vertical_spacing=0.03,
-                    row_heights=[0.7, 0.3] if show_volume else [1.0],
-                )
-                
-                # 添加K线
-                fig.add_trace(
-                    go.Candlestick(
-                        x=df["date"],
-                        open=df["open_price"],
-                        high=df["high_price"],
-                        low=df["low_price"],
-                        close=df["close_price"],
-                        name="K线",
-                    ),
-                    row=1,
-                    col=1,
-                )
-                
-                # 添加均线
-                if show_ma and ma_periods:
-                    indicators = TechnicalIndicators()
-                    df = indicators.add_ma(df, periods=ma_periods)
-                    
-                    colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A"]
-                    for i, period in enumerate(ma_periods):
-                        fig.add_trace(
-                            go.Scatter(
-                                x=df["date"],
-                                y=df[f"ma{period}"],
-                                mode="lines",
-                                name=f"MA{period}",
-                                line=dict(color=colors[i % len(colors)], width=1),
-                            ),
-                            row=1,
-                            col=1,
-                        )
-                
-                # 添加成交量
-                if show_volume:
-                    fig.add_trace(
-                        go.Bar(
-                            x=df["date"],
-                            y=df["volume"],
-                            name="成交量",
-                            marker_color="rgba(76, 175, 80, 0.5)",
-                        ),
-                        row=2,
-                        col=1,
-                    )
-                
-                # 更新图表布局（标题包含股票名称）
                 title_text = f"{selected_stock} K线图"
                 if stock_name:
                     title_text = f"{selected_stock}.{stock_name} K线图"
                 
-                fig.update_layout(
-                    title=title_text,
-                    yaxis_title="价格",
-                    xaxis_rangeslider_visible=False,
-                    height=600,
-                    template="plotly_dark",
-                    xaxis=dict(
-                        rangeselector=dict(
-                            buttons=list([
-                                dict(count=1, label="1月", step="month", stepmode="backward"),
-                                dict(count=3, label="3月", step="month", stepmode="backward"),
-                                dict(count=6, label="6月", step="month", stepmode="backward"),
-                                dict(count=1, label="1年", step="year", stepmode="backward"),
-                                dict(step="all", label="全部"),
-                            ])
-                        ),
-                        rangeslider=dict(visible=False),
-                        type="date",
-                    ),
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
+                render_kline_chart(df, title_text, show_ma=show_ma, ma_periods=ma_periods, show_volume=show_volume)
                 
             except Exception as e:
                 st.error(f"绘制K线图失败: {str(e)}")
-
-
-def render_local_inventory():
-    st.header("📚 本地库存管理")
-    
-    # 检查原始数据目录
-    raw_path = Path("./data/raw")
-    processed_path = Path("./data/processed")
-    
-    if not raw_path.exists():
-        st.warning("原始数据目录不存在")
-        return
-    
-    # 获取原始数据文件
-    raw_files = list(raw_path.glob("*.parquet"))
-    
-    if not raw_files:
-        st.info("暂无已下载的股票数据")
-        return
-    
-    st.subheader(f"📊 已下载股票列表（共 {len(raw_files)} 只）")
-    
-    data_info = []
-    for file in raw_files:
-        try:
-            df = pd.read_parquet(file)
-            data_info.append({
-                "股票代码": file.stem,
-                "数据行数": len(df),
-                "开始日期": df["date"].min() if "date" in df.columns else "N/A",
-                "结束日期": df["date"].max() if "date" in df.columns else "N/A",
-                "文件大小": f"{file.stat().st_size / 1024:.2f} KB",
-            })
-        except Exception as e:
-            st.error(f"读取文件 {file.name} 失败: {str(e)}")
-    
-    if data_info:
-        df_info = pd.DataFrame(data_info)
-        st.dataframe(df_info, use_container_width=True)
-        
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("总股票数", len(data_info))
-        with col2:
-            st.metric("总数据行数", sum([d["数据行数"] for d in data_info]))
-        with col3:
-            total_size = sum([file.stat().st_size for file in raw_files]) / (1024 * 1024)
-            st.metric("总文件大小", f"{total_size:.2f} MB")
-        
-        # 检查预处理数据
-        if processed_path.exists():
-            processed_files = list(processed_path.glob("*.parquet"))
-            if processed_files:
-                st.markdown("---")
-                st.subheader(f"📊 预处理数据（共 {len(processed_files)} 只）")
-                st.info(f"预处理数据存储在 {processed_path}")
-
-
-def render_kline_viewer():
-    st.header("📈 K线图可视化与验真")
-    
-    # 检查原始数据目录
-    raw_path = Path("./data/raw")
-    
-    if not raw_path.exists():
-        st.warning("原始数据目录不存在")
-        return
-    
-    parquet_files = list(raw_path.glob("*.parquet"))
-    
-    if not parquet_files:
-        st.info("暂无已下载的股票数据，请先下载数据")
-        return
-    
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        st.subheader("⚙️ 配置")
-        
-        selected_file = st.selectbox(
-            "选择股票",
-            [file.stem for file in parquet_files],
-        )
-        
-        show_ma = st.checkbox("显示均线", value=True)
-        if show_ma:
-            ma_periods = st.multiselect(
-                "均线周期",
-                [5, 10, 20, 60],
-                default=[5, 20],
-            )
-        
-        show_volume = st.checkbox("显示成交量", value=True)
-        show_macd = st.checkbox("显示MACD", value=False)
-    
-    with col2:
-        st.subheader("📊 K线图")
-        
-        file_path = raw_path / f"{selected_file}.parquet"
-        
-        try:
-            df = pd.read_parquet(file_path)
-            
-            if df.empty:
-                st.warning("该股票数据为空")
-                return
-            
-            df["date"] = pd.to_datetime(df["date"])
-            
-            fig = make_subplots(
-                rows=2 if show_volume else 1,
-                cols=1,
-                shared_xaxes=True,
-                vertical_spacing=0.03,
-                row_heights=[0.7, 0.3] if show_volume else [1.0],
-            )
-            
-            fig.add_trace(
-                go.Candlestick(
-                    x=df["date"],
-                    open=df["open_price"],
-                    high=df["high_price"],
-                    low=df["low_price"],
-                    close=df["close_price"],
-                    name="K线",
-                ),
-                row=1,
-                col=1,
-            )
-            
-            if show_ma and ma_periods:
-                indicators = TechnicalIndicators()
-                df = indicators.add_ma(df, periods=ma_periods)
-                
-                colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A"]
-                for i, period in enumerate(ma_periods):
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df["date"],
-                            y=df[f"ma{period}"],
-                            mode="lines",
-                            name=f"MA{period}",
-                            line=dict(color=colors[i % len(colors)], width=1),
-                        ),
-                        row=1,
-                        col=1,
-                    )
-            
-            if show_volume:
-                fig.add_trace(
-                    go.Bar(
-                        x=df["date"],
-                        y=df["volume"],
-                        name="成交量",
-                        marker_color="rgba(76, 175, 80, 0.5)",
-                    ),
-                    row=2,
-                    col=1,
-                )
-            
-            fig.update_layout(
-                title=f"{selected_file} K线图",
-                yaxis_title="价格",
-                xaxis_rangeslider_visible=False,
-                height=600,
-                template="plotly_dark",
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.markdown("---")
-            
-            st.subheader("📊 数据统计")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("数据行数", len(df))
-            with col2:
-                st.metric("开始日期", df["date"].min().strftime("%Y-%m-%d"))
-            with col3:
-                st.metric("结束日期", df["date"].max().strftime("%Y-%m-%d"))
-            with col4:
-                latest_close = df.iloc[-1]["close_price"]
-                st.metric("最新收盘价", f"{latest_close:.2f}")
-        
-        except Exception as e:
-            st.error(f"读取数据失败: {str(e)}")
 
 
 def render_strategy_config():
@@ -1697,7 +1522,7 @@ def render_stock_selection_result():
     # ==================== 检查本地数据 ====================
     st.subheader("📊 本地数据检查")
     
-    raw_path = Path("./data/raw")
+    raw_path = get_raw_data_path()
     
     if not raw_path.exists():
         st.warning("原始数据目录不存在，请先在'股票数据更新'页面下载数据")
@@ -1858,7 +1683,7 @@ def render_backtest_display():
     st.header("📈 回测分析展示")
     
     # 定义数据路径
-    raw_path = Path("./data/raw")
+    raw_path = get_raw_data_path()
     
     # ==================== 检查本地数据 ====================
     st.subheader("📊 本地数据检查")
@@ -1957,47 +1782,27 @@ def render_backtest_display():
     
     st.markdown("---")
     
-    # ==================== 回测进度 ====================
+    # ==================== 回测执行 ====================
     if run_backtest_btn:
-        st.subheader("📊 回测进度")
+        st.subheader("📊 回测执行")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 模拟回测进度
-        for i in range(100):
-            progress_bar.progress(i + 1)
-            status_text.text(f"回测进度: {i + 1}%")
-            time.sleep(0.05)
-        
-        status_text.text("回测完成！")
-        st.success("回测分析完成！")
-        
-        st.markdown("---")
-        
-        # ==================== 回测结果概览 ====================
-        st.subheader("📊 回测结果概览")
-        
-        # 使用真实的回测引擎生成回测结果
         try:
             from src.backtest.backtest_engine import BacktestEngine
             from src.strategy.selection_strategy import SelectionStrategy, SelectionConfig
             
-            # 从配置文件读取选股策略配置
             selection_config = SelectionConfig.from_config()
-            
-            # 创建选股策略实例
             strategy = SelectionStrategy(selection_config)
             
-            # 从本地数据中读取全量股票的历史数据
             all_data = []
-            for file_path in raw_files:
+            total_files = len(raw_files)
+            for idx, file_path in enumerate(raw_files):
                 try:
                     df = pd.read_parquet(file_path)
                     if not df.empty:
-                        # 确保日期列是 datetime 类型
                         df["date"] = pd.to_datetime(df["date"])
-                        # 筛选回测时间范围内的数据
                         df = df[(df["date"] >= pd.Timestamp(backtest_start_date)) & 
                                 (df["date"] <= pd.Timestamp(backtest_end_date))]
                         if not df.empty:
@@ -2005,29 +1810,35 @@ def render_backtest_display():
                 except Exception as e:
                     st.warning(f"读取文件 {file_path.name} 时出错: {str(e)}")
                     continue
+                
+                pct = int((idx + 1) / total_files * 50) if total_files > 0 else 50
+                progress_bar.progress(pct)
+                status_text.text(f"加载数据: {idx + 1}/{total_files} ({pct}%)")
             
             if all_data:
-                # 合并所有股票的数据
                 combined_df = pd.concat(all_data, ignore_index=True)
-                
-                # 创建回测引擎（使用SelectionStrategy）
-                from src.strategy.selection_strategy import SelectionStrategy, SelectionConfig
-                
-                # 从配置文件读取选股策略配置
-                selection_config = SelectionConfig.from_config()
-                
-                # 创建选股策略实例
-                strategy = SelectionStrategy(selection_config)
                 
                 engine = BacktestEngine(
                     strategy=strategy,
                     initial_cash=initial_cash,
                 )
                 
-                # 运行回测
-                result = engine.run(combined_df)
+                def on_progress(current, total):
+                    pct = 50 + int(current / total * 50) if total > 0 else 100
+                    progress_bar.progress(pct)
+                    status_text.text(f"回测进度: {current}/{total} ({pct - 50}%)")
                 
-                # 展示回测结果概览
+                result = engine.run(combined_df, progress_callback=on_progress)
+                
+                progress_bar.progress(100)
+                status_text.text("回测完成！")
+                st.success("回测分析完成！")
+                
+                st.markdown("---")
+                
+                # ==================== 回测结果概览 ====================
+                st.subheader("📊 回测结果概览")
+                
                 col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
@@ -2050,7 +1861,6 @@ def render_backtest_display():
                 # ==================== 资产变化曲线 ====================
                 st.subheader("📈 资产变化曲线")
                 
-                # 从回测结果中获取资产变化数据
                 if result.portfolio_states:
                     dates = [state.date for state in result.portfolio_states]
                     asset_values = [state.total_value for state in result.portfolio_states]
@@ -2083,7 +1893,6 @@ def render_backtest_display():
                 # ==================== 交易记录明细 ====================
                 st.subheader("📋 交易记录明细")
                 
-                # 展示交易记录
                 if result.transactions:
                     trade_records = []
                     for trans in result.transactions:
@@ -2106,362 +1915,16 @@ def render_backtest_display():
                 else:
                     st.info("回测期间没有产生交易记录")
             else:
+                status_text.text("没有找到符合回测时间范围的数据")
                 st.warning("没有找到符合回测时间范围的数据")
         
         except Exception as e:
+            status_text.text(f"回测执行失败: {str(e)}")
             st.error(f"回测执行失败: {str(e)}")
             import traceback
             st.error(traceback.format_exc())
     else:
         st.info("请点击'运行回测'按钮开始回测分析")
-
-
-def render_backtest_analysis():
-    st.header("🔬 回测分析")
-    
-    web_config = config_loader.get("web", {}).get("control_panel", {})
-    
-    col_sidebar, col_main = st.columns([1, 3])
-    
-    with col_sidebar:
-        st.subheader("🎛️ 控制面板")
-        
-        st.markdown("### 💰 资金配置")
-        initial_cash_config = web_config.get("initial_cash", {})
-        initial_cash = st.number_input(
-            "初始资金",
-            min_value=initial_cash_config.get("min_value", 10000),
-            max_value=initial_cash_config.get("max_value", 100000000),
-            value=initial_cash_config.get("default_value", 1000000),
-            step=initial_cash_config.get("step", 10000),
-        )
-        
-        st.markdown("### 📊 策略参数")
-        strategy_name = st.selectbox(
-            "选择策略",
-            ["SimpleMAStrategy"],
-        )
-        
-        ma_short_config = web_config.get("ma_short", {})
-        ma_short = st.slider(
-            "短期均线",
-            min_value=ma_short_config.get("min_value", 3),
-            max_value=ma_short_config.get("max_value", 20),
-            value=ma_short_config.get("default_value", 5),
-        )
-        
-        ma_long_config = web_config.get("ma_long", {})
-        ma_long = st.slider(
-            "长期均线",
-            min_value=ma_long_config.get("min_value", 10),
-            max_value=ma_long_config.get("max_value", 60),
-            value=ma_long_config.get("default_value", 20),
-        )
-        
-        st.markdown("### 🛡️ 风控参数")
-        stop_loss_config = web_config.get("stop_loss", {})
-        stop_loss = st.slider(
-            "止损线 (%)",
-            min_value=stop_loss_config.get("min_value", -20),
-            max_value=stop_loss_config.get("max_value", -1),
-            value=stop_loss_config.get("default_value", -8),
-        )
-        
-        take_profit_config = web_config.get("take_profit", {})
-        take_profit = st.slider(
-            "止盈线 (%)",
-            min_value=take_profit_config.get("min_value", 5),
-            max_value=take_profit_config.get("max_value", 50),
-            value=take_profit_config.get("default_value", 20),
-        )
-        
-        st.markdown("### 📅 回测区间")
-        col1, col2 = st.columns(2)
-        with col1:
-            default_start = web_config.get("default_start_date", "2024-01-01")
-            start_date = st.date_input("开始日期", value=datetime.strptime(default_start, "%Y-%m-%d"))
-        with col2:
-            default_end = web_config.get("default_end_date", "2024-03-31")
-            end_date = st.date_input("结束日期", value=datetime.strptime(default_end, "%Y-%m-%d"))
-        
-        st.markdown("### 📊 数据源")
-        data_source = st.radio(
-            "选择数据源",
-            ["真实数据", "合成数据"],
-            horizontal=True,
-        )
-        
-        if data_source == "真实数据":
-            data_path = Path("./data")
-            if data_path.exists():
-                parquet_files = list(data_path.glob("*.parquet"))
-                if parquet_files:
-                    selected_stock = st.selectbox(
-                        "选择股票",
-                        [file.stem for file in parquet_files],
-                    )
-                else:
-                    st.warning("暂无已下载数据，请先下载数据或使用合成数据")
-            else:
-                st.warning("数据目录不存在，请先下载数据或使用合成数据")
-        
-        st.markdown("### ⚙️ 回测选项")
-        use_trading_calendar = st.checkbox("使用交易日历过滤（非交易日不交易）", value=True)
-        
-        slippage_enabled = st.checkbox("启用滑点模拟", value=True)
-        if slippage_enabled:
-            slippage_type = st.selectbox(
-                "滑点模型",
-                ["固定滑点", "成交量滑点"],
-            )
-        
-        st.markdown("---")
-        
-        st.markdown("---")
-        run_backtest = st.button("🚀 启动回测", type="primary", use_container_width=True)
-    
-    with col_main:
-        if run_backtest:
-            with st.spinner("正在执行回测..."):
-                try:
-                    if data_source == "合成数据":
-                        stock_data = generate_sample_data(
-                            start_date=datetime.combine(start_date, datetime.min.time()),
-                            end_date=datetime.combine(end_date, datetime.min.time()),
-                        )
-                    else:
-                        data_path = Path("./data/raw")
-                        file_path = data_path / f"{selected_stock}.parquet"
-                        
-                        if not file_path.exists():
-                            st.error(f"股票数据文件不存在: {selected_stock}")
-                            return
-                        
-                        stock_data = pd.read_parquet(file_path)
-                        stock_data["date"] = pd.to_datetime(stock_data["date"])
-                        
-                        mask = (stock_data["date"] >= datetime.combine(start_date, datetime.min.time())) & \
-                               (stock_data["date"] <= datetime.combine(end_date, datetime.min.time()))
-                        stock_data = stock_data[mask]
-                    
-                    # 使用SelectionStrategy进行回测
-                    from src.strategy.selection_strategy import SelectionStrategy, SelectionConfig
-                    
-                    # 从配置文件读取选股策略配置
-                    selection_config = SelectionConfig.from_config()
-                    
-                    # 创建选股策略实例
-                    strategy = SelectionStrategy(selection_config)
-                    strategy.stop_loss_pct = stop_loss
-                    strategy.take_profit_pct = take_profit
-                    
-                    slippage_model = None
-                    if slippage_enabled:
-                        if slippage_type == "固定滑点":
-                            slippage_model = FixedSlippageModel(slippage_rate=0.001)
-                        else:
-                            slippage_model = VolumeBasedSlippageModel()
-                    
-                    trading_calendar = None
-                    if use_trading_calendar:
-                        try:
-                            trading_calendar = TradingCalendarService()
-                        except Exception as e:
-                            logger.warning(f"Failed to initialize trading calendar: {e}")
-                    
-                    engine = BacktestEngine(
-                        strategy=strategy,
-                        initial_cash=initial_cash,
-                        slippage_model=slippage_model,
-                        trading_calendar=trading_calendar,
-                        use_trading_calendar=use_trading_calendar,
-                    )
-                    
-                    result = engine.run(stock_data)
-                    
-                    st.success("回测完成！")
-                    
-                    st.markdown("---")
-                    
-                    st.subheader("📊 回测结果")
-                    
-                    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-                    
-                    with col1:
-                        st.metric(
-                            label="总收益率",
-                            value=f"{result.total_return:.2f}%",
-                            delta=f"{result.total_return:.2f}%",
-                        )
-                    
-                    with col2:
-                        st.metric(
-                            label="年化收益率",
-                            value=f"{result.annual_return:.2f}%",
-                            delta=f"{result.annual_return:.2f}%",
-                        )
-                    
-                    with col3:
-                        st.metric(
-                            label="最大回撤",
-                            value=f"{result.max_drawdown:.2f}%",
-                            delta=f"-{result.max_drawdown:.2f}%",
-                            delta_color="inverse",
-                        )
-                    
-                    with col4:
-                        st.metric(
-                            label="夏普比率",
-                            value=f"{result.sharpe_ratio:.2f}",
-                        )
-                    
-                    with col5:
-                        st.metric(
-                            label="总交易次数",
-                            value=f"{result.total_trades}",
-                        )
-                    
-                    with col6:
-                        st.metric(
-                            label="胜率",
-                            value=f"{result.win_rate:.1f}%",
-                        )
-                    
-                    with col7:
-                        st.metric(
-                            label="滑点成本",
-                            value=f"{result.total_slippage_cost:.2f}",
-                        )
-                    
-                    st.markdown("---")
-                    
-                    st.subheader("📈 资产净值与回撤")
-                    
-                    if result.portfolio_states:
-                        df_portfolio = pd.DataFrame([state.to_dict() for state in result.portfolio_states])
-                        df_portfolio["date"] = pd.to_datetime(df_portfolio["date"])
-                        df_portfolio["normalized_value"] = df_portfolio["total_value"] / df_portfolio["total_value"].iloc[0]
-                        
-                        df_portfolio["peak"] = df_portfolio["total_value"].cummax()
-                        df_portfolio["drawdown"] = (df_portfolio["total_value"] - df_portfolio["peak"]) / df_portfolio["peak"] * 100
-                        
-                        col1, col2 = st.columns([3, 1])
-                        
-                        with col1:
-                            st.line_chart(
-                                df_portfolio.set_index("date")[["normalized_value"]],
-                                use_container_width=True,
-                            )
-                        
-                        with col2:
-                            st.area_chart(
-                                df_portfolio.set_index("date")[["drawdown"]],
-                                use_container_width=True,
-                            )
-                    
-                    st.markdown("---")
-                    
-                    st.subheader("📊 K线图与交易信号")
-                    
-                    if not stock_data.empty:
-                        fig = make_subplots(
-                            rows=2,
-                            cols=1,
-                            shared_xaxes=True,
-                            vertical_spacing=0.03,
-                            row_heights=[0.7, 0.3],
-                        )
-                        
-                        fig.add_trace(
-                            go.Candlestick(
-                                x=stock_data["date"],
-                                open=stock_data["open_price"],
-                                high=stock_data["high_price"],
-                                low=stock_data["low_price"],
-                                close=stock_data["close_price"],
-                                name="K线",
-                            ),
-                            row=1,
-                            col=1,
-                        )
-                        
-                        buy_transactions = [t for t in result.transactions if t.action == "BUY"]
-                        sell_transactions = [t for t in result.transactions if t.action == "SELL"]
-                        
-                        if buy_transactions:
-                            buy_dates = [t.date for t in buy_transactions]
-                            buy_prices = [t.price for t in buy_transactions]
-                            
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=buy_dates,
-                                    y=buy_prices,
-                                    mode="markers",
-                                    name="买入",
-                                    marker=dict(symbol="triangle-up", size=10, color="red"),
-                                ),
-                                row=1,
-                                col=1,
-                            )
-                        
-                        if sell_transactions:
-                            sell_dates = [t.date for t in sell_transactions]
-                            sell_prices = [t.price for t in sell_transactions]
-                            
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=sell_dates,
-                                    y=sell_prices,
-                                    mode="markers",
-                                    name="卖出",
-                                    marker=dict(symbol="triangle-down", size=10, color="green"),
-                                ),
-                                row=1,
-                                col=1,
-                            )
-                        
-                        fig.add_trace(
-                            go.Bar(
-                                x=stock_data["date"],
-                                y=stock_data["volume"],
-                                name="成交量",
-                                marker_color="rgba(76, 175, 80, 0.5)",
-                            ),
-                            row=2,
-                            col=1,
-                        )
-                        
-                        fig.update_layout(
-                            title="K线图与交易信号",
-                            yaxis_title="价格",
-                            xaxis_rangeslider_visible=False,
-                            height=600,
-                            template="plotly_dark",
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("---")
-                    
-                    st.subheader("📋 交易记录")
-                    
-                    if result.transactions:
-                        df_transactions = pd.DataFrame([t.to_dict() for t in result.transactions])
-                        df_transactions["date"] = pd.to_datetime(df_transactions["date"]).dt.strftime("%Y-%m-%d")
-                        
-                        st.dataframe(
-                            df_transactions[["date", "code", "action", "price", "shares", "amount", "reason"]],
-                            use_container_width=True,
-                        )
-                    else:
-                        st.info("无交易记录")
-                
-                except Exception as e:
-                    st.error(f"回测失败: {str(e)}")
-                    logger.error(f"回测失败: {str(e)}", exc_info=True)
-        
-        else:
-            st.info("请在左侧配置参数后点击\"启动回测\"按钮")
 
 
 def main():
