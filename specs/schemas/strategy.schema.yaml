@@ -1,38 +1,95 @@
-version: 1
+version: 2
 
 strategy:
-  name: limit_up_strategy
+  # 子策略融合权重（总和归一化为 100%）
+  sub_strategies:
+    trend_weight: 30.0
+    momentum_weight: 25.0
+    volume_price_weight: 25.0
+    quality_weight: 20.0
 
-  stock_selection:
-    min_price: 10
-    max_price: 50
+    # 策略A：趋势跟踪
+    trend:
+      adx_weight: 0.30
+      ma_weight: 0.30
+      macd_weight: 0.20
+      pullback_weight: 0.20
+      adx_strong_threshold: 25.0
+      adx_weak_threshold: 20.0
+      # ... 更多超参见 config/settings.yaml
 
-    max_market_cap: 200
+    # 策略B：动量反转
+    momentum:
+      short_reversal_weight: 0.35
+      multi_momentum_weight: 0.35
+      rsi_weight: 0.30
+      # ... 更多超参见 config/settings.yaml
 
-    min_limit_up_count: 1
-    max_limit_up_count: 5
+    # 策略C：量价共振
+    volume_price:
+      vol_ratio_weight: 0.30
+      turnover_weight: 0.15
+      vp_corr_weight: 0.20
+      obv_weight: 0.20
+      shrink_stop_weight: 0.15
+      # ... 更多超参见 config/settings.yaml
 
-    limit_up_period: 30
+    # 策略D：低波动质量
+    quality:
+      volatility_weight: 0.30
+      skewness_weight: 0.20
+      downside_weight: 0.20
+      fundamental_weight: 0.30
+      # ... 更多超参见 config/settings.yaml
 
-    max_price_increase: 30
+  # 选股筛选
+  selection:
+    market_cap_min: 50
+    market_cap_max: 20000
+    price_min: 5.0
+    price_max: 2000.0
+    limit_up_min: 0
+    limit_down_max: 3
+    limit_stat_period: 20
+    max_up_threshold: 10.0
+    max_down_threshold: -10.0
+    initial_cash: 1000000.0
+    max_positions: 10
+    top_n: 20
+    min_score_threshold: 50.0
+    cooldown_days: 5
+    max_trades_per_day: 5
 
-    min_volume: 100
+    # 5因子权重（%）
+    trend_weight: 35.0
+    momentum_weight: 25.0
+    volume_weight: 20.0
+    volatility_weight: 10.0
+    fundamental_weight: 10.0
 
-    require_profit: true
+    # 风控
+    enable_risk_control: true
+    enable_st_filter: true
+    enable_limit_filter: true
 
-  indicators:
-    ma_short: 5
-    ma_long: 20
-    rsi_period: 14
+    # 横截面 / 行情自适应（默认关闭）
+    cross_sectional_enabled: false
+    regime_enabled: false
 
-  risk_control:
-    stop_loss_ratio: 0.2
-    profit_target: 0.4
-    max_stocks: 5
+  # 缺失数据处理
+  missing_data:
+    mode: redistribute  # redistribute | neutral | penalize | exclude
 
-  scoring:
-    price_weight: 0.2
-    limit_up_weight: 0.3
-    technical_weight: 0.25
-    fundamental_weight: 0.15
-    volume_weight: 0.1
+  # 横截面标准化（默认关闭）
+  cross_sectional:
+    enabled: false
+    method: zscore  # zscore | rank
+
+  # 行情自适应（默认关闭）
+  regime:
+    enabled: false
+    breadth_bull: 0.60
+    breadth_trend: 0.50
+    breadth_bear: 0.40
+    vol_high: 0.50
+    vol_low: 0.30

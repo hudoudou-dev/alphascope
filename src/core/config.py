@@ -27,7 +27,7 @@ class ConfigLoader:
     
     def __init__(self, config_path: str | Path | None = None):
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "config" / "settings.yaml"
+            config_path = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
         self.config_path = Path(config_path)
         self._config: dict[str, Any] | None = None
     

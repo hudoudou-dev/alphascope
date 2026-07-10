@@ -923,8 +923,13 @@ def render_stock_overview():
                 if pure_code in AKShareProvider._stock_name_cache:
                     stock_name = AKShareProvider._stock_name_cache[pure_code]
             
+            # 从文件名中提取纯代码: "300502.SZ.新易盛" → "300502.SZ"
+            file_stem = file.stem
+            file_parts = file_stem.split(".")
+            display_code = f"{file_parts[0]}.{file_parts[1]}" if len(file_parts) >= 2 else file_stem
+
             data_info.append({
-                "股票代码": file.stem,
+                "股票代码": display_code,
                 "股票名称": stock_name,
                 "数据行数": len(df),
                 "开始日期": df["date"].min() if "date" in df.columns else "N/A",
@@ -967,15 +972,23 @@ def render_stock_overview():
     # ==================== 中间部分：特定股票数据明细 ====================
     st.subheader("📋 股票数据明细")
     
-    # 股票选择下拉框
+    # 股票选择下拉框（显示纯代码 300502.SZ，用实际文件名查找文件）
+    stock_options = []
+    stock_file_map = {}  # pure_code → actual_file_path
+    for f in raw_files:
+        f_parts = f.stem.split(".")
+        display_code = f"{f_parts[0]}.{f_parts[1]}" if len(f_parts) >= 2 else f.stem
+        stock_options.append(display_code)
+        stock_file_map[display_code] = f
+
     selected_stock = st.selectbox(
         "选择股票代码",
-        [file.stem for file in raw_files],
+        stock_options,
         help="选择要查看的股票代码",
     )
     
     if selected_stock:
-        file_path = raw_path / f"{selected_stock}.parquet"
+        file_path = stock_file_map[selected_stock]
         
         try:
             df = pd.read_parquet(file_path)
@@ -1347,59 +1360,98 @@ def render_strategy_config():
     # ==================== 评分权重配置 ====================
     st.subheader("⚖️ 评分权重配置")
     
-    st.markdown("**调整均线策略的评分权重（基于实际选股因子）**")
+    st.markdown("**5因子评分权重（总和建议为100%）**")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.markdown("**均线排列权重**")
-        
-        # 均线排列权重（从配置文件读取）
-        ma_alignment_weight = st.slider(
-            "均线排列权重 (%)",
+        st.markdown("**趋势信号**")
+        trend_weight = st.slider(
+            "趋势 (%)",
             min_value=0,
             max_value=100,
-            value=int(selection_config.ma_alignment_weight),
-            help="均线排列（MA5 > MA10 > MA20）的评分权重",
+            value=int(selection_config.trend_weight),
+            help="MA排列 + MACD金叉/死叉",
         )
-        
-        st.info("均线排列：多头排列（强势上涨）得分最高")
+        st.caption("MA排列 + MACD")
     
     with col2:
-        st.markdown("**价格位置权重**")
-        
-        # 价格位置权重（从配置文件读取）
-        price_position_weight = st.slider(
-            "价格位置权重 (%)",
+        st.markdown("**动量信号**")
+        momentum_weight = st.slider(
+            "动量 (%)",
             min_value=0,
             max_value=100,
-            value=int(selection_config.price_position_weight),
-            help="价格相对于均线的位置权重",
+            value=int(selection_config.momentum_weight),
+            help="RSI + 近期涨跌幅",
         )
-        
-        st.info("价格位置：价格在均线之上的得分较高")
+        st.caption("RSI + 涨跌幅")
     
     with col3:
-        st.markdown("**趋势强度权重**")
-        
-        # 趋势强度权重（从配置文件读取）
-        trend_strength_weight = st.slider(
-            "趋势强度权重 (%)",
+        st.markdown("**成交量信号**")
+        volume_weight = st.slider(
+            "成交量 (%)",
             min_value=0,
             max_value=100,
-            value=int(selection_config.trend_strength_weight),
-            help="趋势强度的评分权重",
+            value=int(selection_config.volume_weight),
+            help="量比",
         )
-        
-        st.info("趋势强度：均线斜率和发散程度的权重")
+        st.caption("量比")
+    
+    with col4:
+        st.markdown("**波动率信号**")
+        volatility_weight = st.slider(
+            "波动率 (%)",
+            min_value=0,
+            max_value=100,
+            value=int(selection_config.volatility_weight),
+            help="布林带位置",
+        )
+        st.caption("布林带")
+    
+    with col5:
+        st.markdown("**基本面**")
+        fundamental_weight = st.slider(
+            "基本面 (%)",
+            min_value=0,
+            max_value=100,
+            value=int(selection_config.fundamental_weight),
+            help="PE/PB/ROE（数据不可得时自动重分配）",
+        )
+        st.caption("PE/PB/ROE")
     
     # 显示权重总和
-    total_weight = ma_alignment_weight + price_position_weight + trend_strength_weight
+    total_weight = trend_weight + momentum_weight + volume_weight + volatility_weight + fundamental_weight
     
     if total_weight == 100:
         st.success(f"权重总和：{total_weight}% ✓")
     else:
-        st.warning(f"权重总和：{total_weight}%（建议调整为100%）")
+        st.warning(f"权重总和：{total_weight}%（建议调整为100%，系统会自动归一化）")
+    
+    st.markdown("---")
+    
+    # ==================== 风控配置 ====================
+    st.subheader("🛡️ 风控配置")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        enable_risk_control = st.checkbox(
+            "启用风控",
+            value=selection_config.enable_risk_control,
+            help="是否启用风控过滤（涨停/ST过滤）",
+        )
+    with col2:
+        enable_st_filter = st.checkbox(
+            "ST股过滤",
+            value=selection_config.enable_st_filter,
+            help="自动过滤ST股票",
+        )
+    with col3:
+        enable_limit_filter = st.checkbox(
+            "涨停股过滤",
+            value=selection_config.enable_limit_filter,
+            help="当日涨停的股票不可买入",
+        )
     
     st.markdown("---")
     
@@ -1438,9 +1490,16 @@ def render_strategy_config():
         config.update("strategy.selection.max_positions", max_positions)
         config.update("strategy.selection.top_n", top_n)
         config.update("strategy.selection.min_score_threshold", min_score_threshold)
-        config.update("strategy.selection.ma_alignment_weight", ma_alignment_weight)
-        config.update("strategy.selection.price_position_weight", price_position_weight)
-        config.update("strategy.selection.trend_strength_weight", trend_strength_weight)
+        # 5因子权重
+        config.update("strategy.selection.trend_weight", trend_weight)
+        config.update("strategy.selection.momentum_weight", momentum_weight)
+        config.update("strategy.selection.volume_weight", volume_weight)
+        config.update("strategy.selection.volatility_weight", volatility_weight)
+        config.update("strategy.selection.fundamental_weight", fundamental_weight)
+        # 风控配置
+        config.update("strategy.selection.enable_risk_control", enable_risk_control)
+        config.update("strategy.selection.enable_st_filter", enable_st_filter)
+        config.update("strategy.selection.enable_limit_filter", enable_limit_filter)
         
         # 保存数据抓取配置到配置文件
         config.update("data.providers.akshare.retry_times", max_retry_times)
@@ -1469,9 +1528,16 @@ def render_strategy_config():
         config.update("strategy.selection.max_positions", default_config.max_positions)
         config.update("strategy.selection.top_n", default_config.top_n)
         config.update("strategy.selection.min_score_threshold", default_config.min_score_threshold)
-        config.update("strategy.selection.ma_alignment_weight", default_config.ma_alignment_weight)
-        config.update("strategy.selection.price_position_weight", default_config.price_position_weight)
-        config.update("strategy.selection.trend_strength_weight", default_config.trend_strength_weight)
+        # 5因子权重
+        config.update("strategy.selection.trend_weight", default_config.trend_weight)
+        config.update("strategy.selection.momentum_weight", default_config.momentum_weight)
+        config.update("strategy.selection.volume_weight", default_config.volume_weight)
+        config.update("strategy.selection.volatility_weight", default_config.volatility_weight)
+        config.update("strategy.selection.fundamental_weight", default_config.fundamental_weight)
+        # 风控配置
+        config.update("strategy.selection.enable_risk_control", default_config.enable_risk_control)
+        config.update("strategy.selection.enable_st_filter", default_config.enable_st_filter)
+        config.update("strategy.selection.enable_limit_filter", default_config.enable_limit_filter)
         
         st.warning("配置已重置为默认值")
 
@@ -1515,7 +1581,7 @@ def render_stock_selection_result():
     
     with col4:
         st.metric("涨跌停统计周期", f"{selection_config.limit_stat_period} 天")
-        st.metric("最大涨幅阈值", f"{selection_config.max_up_threshold}%")
+        st.metric("风控过滤", f"{'启用' if selection_config.enable_risk_control else '关闭'}")
     
     st.markdown("---")
     
@@ -1612,19 +1678,68 @@ def render_stock_selection_result():
                 latest_close = latest.get("close_price", 0)
                 latest_pct_chg = latest.get("pct_chg", 0)
                 
+                # 获取因子明细（如果有完整指标数据）
+                trend_detail = ""
+                momentum_detail = ""
+                volume_detail = ""
+                vol_detail = ""
+                fund_detail = ""
+                
+                try:
+                    rsi_val = latest.get("rsi", None)
+                    rsi_val = f"{float(rsi_val):.1f}" if rsi_val is not None and not pd.isna(rsi_val) else "-"
+                    
+                    macd_val = latest.get("macd", None)
+                    macd_sig = latest.get("macd_signal", None)
+                    if macd_val is not None and macd_sig is not None and not pd.isna(macd_val) and not pd.isna(macd_sig):
+                        trend_detail = f"MACD:{'金叉' if macd_val > macd_sig else '死叉'}"
+                    else:
+                        trend_detail = "-"
+                    
+                    momentum_detail = f"RSI:{rsi_val}"
+                    
+                    vol_ratio = latest.get("volume_ratio", None)
+                    volume_detail = f"量比:{float(vol_ratio):.1f}" if vol_ratio is not None and not pd.isna(vol_ratio) else "-"
+                    
+                    bb_pos = "-"
+                    bb_upper = latest.get("bb_upper", None)
+                    bb_lower = latest.get("bb_lower", None)
+                    if bb_upper is not None and bb_lower is not None and not pd.isna(bb_upper) and not pd.isna(bb_lower):
+                        bb_range = float(bb_upper) - float(bb_lower)
+                        if bb_range > 0:
+                            pos = (float(latest_close) - float(bb_lower)) / bb_range
+                            if pos < 0.1:
+                                bb_pos = "下轨"
+                            elif pos > 0.9:
+                                bb_pos = "上轨"
+                            elif 0.4 <= pos <= 0.6:
+                                bb_pos = "中轨"
+                            else:
+                                bb_pos = f"{pos*100:.0f}%"
+                    vol_detail = f"BB:{bb_pos}" if bb_pos != "-" else "-"
+                    
+                    fund_detail = "-"
+                except Exception:
+                    pass
+                
                 # 确保涨跌幅是数值类型
                 try:
                     latest_pct_chg = float(latest_pct_chg) if latest_pct_chg else 0.0
                 except (ValueError, TypeError):
                     latest_pct_chg = 0.0
                 
-                # 判断是否可交易（简单判断：涨跌幅在 -10% 到 10% 之间）
+                # 判断是否可交易
                 tradable = "是" if -10 <= latest_pct_chg <= 10 else "否"
                 
                 selection_results.append({
                     "股票代码": file.stem,
                     "股票名称": stock_name,
-                    "评分": score,
+                    "综合评分": round(score, 1),
+                    "趋势": trend_detail,
+                    "动量": momentum_detail,
+                    "量价": volume_detail,
+                    "波动": vol_detail,
+                    "基本面": fund_detail,
                     "股价（元）": latest_close,
                     "涨跌幅": f"{latest_pct_chg:.2f}%",
                     "可交易": tradable,
@@ -1635,7 +1750,7 @@ def render_stock_selection_result():
                 continue
         
         # 按评分倒排排序
-        selection_results = sorted(selection_results, key=lambda x: x["评分"], reverse=True)
+        selection_results = sorted(selection_results, key=lambda x: x["综合评分"], reverse=True)
         
         # 只展示 Top-N（从配置读取）
         selection_results = selection_results[:selection_config.top_n]
@@ -1645,15 +1760,18 @@ def render_stock_selection_result():
             st.dataframe(df_results, use_container_width=True)
             
             # 统计信息
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("候选股票数", len(selection_results))
             with col2:
-                avg_score = sum([r["评分"] for r in selection_results]) / len(selection_results)
-                st.metric("平均评分", f"{avg_score:.2f}")
+                avg_score = sum([r["综合评分"] for r in selection_results]) / len(selection_results)
+                st.metric("平均评分", f"{avg_score:.1f}")
             with col3:
                 tradable_count = sum([1 for r in selection_results if r["可交易"] == "是"])
                 st.metric("可交易股票数", tradable_count)
+            with col4:
+                high_score = max([r["综合评分"] for r in selection_results]) if selection_results else 0
+                st.metric("最高评分", f"{high_score:.1f}")
             
             st.success("选股策略执行完成！")
             

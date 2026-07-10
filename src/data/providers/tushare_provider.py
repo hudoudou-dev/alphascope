@@ -74,7 +74,11 @@ class TushareProvider(BaseDataProvider):
                 return pd.DataFrame()
             
             df = self._normalize_columns(df, code)
-            
+
+            # 合并 daily_basic 基本面/市值列（pe_ttm, pb, total_mv 等）；
+            # 这些列供 QualityStrategy 基本面因子与市值区间过滤使用，缺失时优雅跳过。
+            df = self._merge_daily_basic(df, code, start_date, end_date)
+
             # 获取股票名称（使用缓存，避免每次都调用 API）
             pure_code = code.split(".")[0] if "." in code else code
             stock_name = self._get_stock_name_cached(pure_code)
@@ -293,3 +297,62 @@ class TushareProvider(BaseDataProvider):
         except Exception as e:
             self.logger.error("Failed to fetch daily basic", code=code, error=str(e))
             raise
+
+    def get_daily_basic_history(
+        self, code: str, start_date: str | datetime, end_date: str | datetime
+    ) -> pd.DataFrame:
+        """一次性拉取某股票区间内的 daily_basic（估值/市值）序列，用于与日线行情合并。"""
+        ts_code = self._to_ts_code(code)
+
+        if isinstance(start_date, datetime):
+            start_date = start_date.strftime("%Y%m%d")
+        if isinstance(end_date, datetime):
+            end_date = end_date.strftime("%Y%m%d")
+
+        try:
+            df = self.pro.daily_basic(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields="ts_code,trade_date,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,total_mv,circ_mv",
+            )
+            if df.empty:
+                return pd.DataFrame()
+
+            df = df.rename(columns={"trade_date": "date"})
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+
+        except Exception as e:
+            self.logger.warning("Failed to fetch daily_basic history", code=code, error=str(e))
+            return pd.DataFrame()
+
+    def _merge_daily_basic(
+        self,
+        df: pd.DataFrame,
+        code: str,
+        start_date: str | datetime,
+        end_date: str | datetime,
+    ) -> pd.DataFrame:
+        """将 daily_basic 的估值/市值列左连接到日线行情；任何失败均降级为不合并。"""
+        if df.empty or "date" not in df.columns:
+            return df
+
+        try:
+            basic = self.get_daily_basic_history(code, start_date, end_date)
+            if basic.empty:
+                return df
+
+            keep = ["date", "pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", "total_mv", "circ_mv"]
+            basic = basic[[c for c in keep if c in basic.columns]]
+
+            merged = df.merge(basic, on="date", how="left")
+            self.logger.debug(
+                "merged daily_basic fundamentals",
+                code=code,
+                columns=[c for c in keep if c != "date" and c in basic.columns],
+            )
+            return merged
+        except Exception as e:
+            self.logger.warning("merge daily_basic failed", code=code, error=str(e))
+            return df

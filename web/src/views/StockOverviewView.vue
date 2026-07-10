@@ -210,7 +210,7 @@ watch(stockDetail, (val) => {
           <strong>K线图可视化</strong>
           <div>
             <el-select v-model="selectedStock" placeholder="选择股票" size="small" style="width: 260px">
-              <el-option v-for="s in stocks" :key="s.code" :label="`${s.code} ${s.name || ''}`" :value="s.code" />
+              <el-option v-for="s in stocks" :key="s.code" :label="`${s.code}.${s.name || ''}`" :value="s.code" />
             </el-select>
             <el-checkbox v-model="showMA" style="margin-left: 12px">均线</el-checkbox>
             <el-checkbox v-model="showVolume">成交量</el-checkbox>

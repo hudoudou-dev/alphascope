@@ -1,11 +1,3 @@
-<!--
- * @Author: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @Date: 2026-05-21 17:18:15
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-05-26 16:41:07
- * @FilePath: /alphascope/docs/prd.md
- * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
--->
 # AlphaScope PRD
 
 ## 1. Product Overview
@@ -16,8 +8,10 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 
 系统支持：
 
-- 自动化股票数据下载
-- 多策略选股
+- 自动化股票数据下载（含基本面 PE/PB/市值）
+- 多策略选股（4 套子策略并行打分 + 加权融合）
+- 横截面标准化打分（可选）
+- 行情自适应权重（可选）
 - 历史数据回测
 - Web 可视化展示与分析
 - 自动通知推送
@@ -40,7 +34,7 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 
 系统每日自动：
 
-1. 获取 A 股市场数据
+1. 获取 A 股市场数据（含基本面）
 2. 更新本地历史数据库
 3. 根据策略筛选股票
 4. 生成推荐买入/卖出列表
@@ -59,34 +53,28 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 - 多线程并发下载
 - 支持增量更新
 - 支持滑动窗口历史清理
+- 支持基本面数据合并（PE/PB/市值）
 
 ### Data Sources
 
 - Akshare
 - Baostock
-- Tushare
+- Tushare（含 daily_basic 基本面接口）
 
 ### Data Fields
 
 包括但不限于：
 
-- 股票代码
-- 股票名称
-- 开盘价
-- 收盘价
-- 最高价
-- 最低价
-- 成交量
-- 成交额
-- 涨跌幅
-- 换手率
-- 总市值
-- 流通市值
+- 股票代码、股票名称
+- 开盘价、收盘价、最高价、最低价
+- 成交量、成交额、涨跌幅、换手率
+- 总市值、流通市值、PE_TTM、PB
 
 ### Storage
 
-- Parquet
-- Snappy Compression
+- Parquet + Snappy Compression
+- 原始数据：`./data/raw/`
+- 预处理数据：`./data/processed/`
 
 ---
 
@@ -98,15 +86,26 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 - 支持策略插件化
 - 支持多维度评分
 
+### 子策略体系（4 套并行打分）
+
+| 子策略 | 权重 | 因子 | 适用场景 |
+|--------|------|------|----------|
+| TrendStrategy | 30% | ADX、MA排列、MACD、回调买点 | 单边趋势市 |
+| MomentumStrategy | 25% | 短期反转、多周期动量、RSI | 震荡市/超跌反弹 |
+| VolumePriceStrategy | 25% | 量比、换手率、量价相关、OBV、缩量止跌 | 放量突破/缩量企稳 |
+| QualityStrategy | 20% | 波动率、偏度、下行风险、基本面 | 防御/熊市 |
+
+### 可选增强
+
+- **横截面标准化**（cross_sectional）：将绝对分转为全市场相对排名分
+- **行情自适应**（regime）：根据市场状态（牛/趋势/震荡/熊）动态切换子策略权重
+
 ### Supported Factors
 
-- 市值
-- 股价
-- 涨跌幅
-- MA
-- RSI
-- MACD
-- 成交量
+- 趋势类：ADX、MA排列、MACD、回调买点
+- 动量类：短期反转、多周期动量(10/20/60)、RSI
+- 量价类：量比、换手率、量价相关、OBV、缩量止跌
+- 质量类：波动率、偏度、下行波动率、PE/PB
 
 ### Strategy Constraints
 
@@ -137,11 +136,25 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 
 ### Features
 
-- K线展示
-- 参数配置
-- 策略管理
-- Top-N 股票展示
+- K线展示（含股票名称）
+- 参数配置（与 settings.yaml 双向同步）
+- 多策略超参管理
+- Top-N 股票展示（按得分排序）
 - 回测结果可视化
+
+### 技术栈
+
+- 后端：FastAPI
+- 前端：Vue.js 3 + ECharts
+
+### 页面结构
+
+1. **首页** — 项目介绍
+2. **股票走势概览** — 数据总览 + 单股明细 + K线验真
+3. **股票数据更新** — 下载配置 + 进度监控 + 日志流
+4. **选股策略配置** — 超参配置，与 settings.yaml 同步
+5. **选股生成结果** — 运行选股，展示候选股票清单
+6. **回测分析展示** — 回测结果可视化
 
 ---
 
@@ -187,9 +200,13 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 包括：
 
 - 数据下载
-- 策略参数
+- 4 套子策略全部超参（因子阈值、权重等）
+- 选股筛选条件
 - 回测参数
 - 通知参数
+- 横截面标准化参数
+- 行情自适应参数
+- 缺失数据处理策略
 
 ---
 
@@ -198,13 +215,12 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 | Layer | Tech |
 |---|---|
 | Backend | Python + FastAPI |
-| Frontend | Vue3 / Streamlit |
+| Frontend | Vue.js 3 + ECharts |
 | Data | Pandas + Parquet |
-| Indicators | pandas-ta |
+| Indicators | pandas 向量化 |
 | Scheduler | APScheduler |
 | Storage | Local FS |
-| Cache | Redis |
-| Visualization | Plotly |
+| Visualization | Plotly / ECharts |
 
 ---
 
@@ -227,9 +243,9 @@ AlphaScope 是一个面向 A 股市场的 Python 量化选股与回测平台。
 - 单次全市场更新 ≤ 30 分钟
 - Web 查询响应 ≤ 2 秒
 
-# 8. Supplements 
+# 8. Supplements
 
-## 8.1 增加交易日历模块
+## 8.1 交易日历模块
 
 ### Features
 
@@ -239,12 +255,6 @@ A股不是每天交易。必须支持：
 - 下一个交易日
 - 节假日
 - 收盘后触发
-
-否则：
-- 定时任务会错
-- 回测会错
-- MA/RSI窗口会错
-- 数据缺失会错
 
 ---
 
@@ -260,10 +270,7 @@ A股不是每天交易。必须支持：
 - 复权一致性
 - 股票退市
 
-否则回测结果可能出错
-
 ---
-
 
 ## 8.3 风险控制模块
 
@@ -276,11 +283,9 @@ A股不是每天交易。必须支持：
 - ST过滤
 - 涨停不可买
 - 跌停不可卖
-
-否则回测严重失真。
+- 行业集中度限制
 
 ---
-
 
 ## 8.4 日志与审计
 
@@ -292,7 +297,17 @@ A股不是每天交易。必须支持：
 - Web
 - 通知
 - 异常
+- 子策略数据完整度警告
 
 ---
 
+## 8.5 多策略选股引擎（v2 新增）
 
+### Features
+
+- 4 套独立子策略并行打分
+- 加权平均融合
+- 缺失数据自动降级（redistribute/neutral/penalize/exclude）
+- 横截面标准化（z-score/rank，默认关闭）
+- 行情自适应权重（BULL/TREND/RANGE/BEAR，默认关闭）
+- 基本面因子接入（PE/PB，缺失时优雅降级）

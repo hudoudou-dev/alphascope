@@ -97,13 +97,20 @@ const runSelection = async () => {
       <template #header><strong>候选股票清单</strong>（按评分倒序）</template>
       <el-table :data="results" stripe size="default">
         <el-table-column type="index" label="排名" width="70" />
-        <el-table-column prop="code" label="股票代码" min-width="140" />
-        <el-table-column prop="name" label="股票名称" width="100" />
-        <el-table-column prop="score" label="评分" width="100" sortable>
+        <el-table-column prop="code" label="股票代码" min-width="120" />
+        <el-table-column prop="name" label="股票名称" width="90" />
+        <el-table-column prop="score" label="综合评分" width="110" sortable>
           <template #default="{ row }">
             <el-progress :percentage="row.score" :color="row.score >= 75 ? '#67c23a' : row.score >= 60 ? '#e6a23c' : '#f56c6c'" :show-text="false" :stroke-width="8" style="display: inline-block; width: 60px; vertical-align: middle" />
             <span style="margin-left: 8px">{{ row.score }}</span>
           </template>
+        </el-table-column>
+        <el-table-column label="因子明细" min-width="260">
+          <el-table-column prop="trend_detail" label="趋势" width="80" />
+          <el-table-column prop="momentum_detail" label="动量" width="80" />
+          <el-table-column prop="volume_detail" label="量价" width="80" />
+          <el-table-column prop="vol_detail" label="波动" width="80" />
+          <el-table-column prop="fund_detail" label="基本面" width="80" />
         </el-table-column>
         <el-table-column prop="close_price" label="股价（元）" width="100" />
         <el-table-column prop="pct_chg" label="涨跌幅" width="100">

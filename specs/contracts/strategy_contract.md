@@ -10,103 +10,100 @@ BaseStrategy
 
 ---
 
-## 2. 必须实现的方法
+## 2. 基类已提供的公共能力
 
 ### prepare
 
 ```python
-prepare(df: pd.DataFrame) -> pd.DataFrame
+prepare(df: pd.DataFrame, compute_turn: bool = False) -> pd.DataFrame
 ```
 
-数据准备与预处理，用于：
+统一为所有子策略计算全量技术指标（按股票分组，避免跨边界污染）。
+`compute_turn=True` 时额外计算换手率近似值。
 
-- 生成技术指标
-- 生成因子
-- 预处理数据
-
-在评估股票前，策略需要把所有必要的历史数据（K线、财务报表、技术指标等）加载到内存中，并进行清洗或计算（比如计算 5 日均线、MACD 等）。
-
-输入：股票代码列表（ts_code_list）、时间范围（start_date, end_date）、原始行情数据。
-
-输出：无，或返回一个对齐好时间的结构化数据集（如 Pandas DataFrame）。
-
-基本功能：检查数据完整性，剔除停牌、刚上市新股等异常标的。
-
----
-
-### should_buy
-
-```python
-should_buy(code: str, daily_data: pd.Series) -> bool
-```
-
-用于：
-
-- 判断是否买入
-
-买入信号触发判定，用于判定满足“择时”的触发条件，判断当前时点是否应该对某只股票发出买入指令。
-
-输入：特定股票代码、当前交易日数据、当前账户的持仓仓位状态。
-
-输出：布尔值 True（买入）/ False（不买），或者包含推荐买入仓位比例的结构体。
-
-基本功能：基类可以实现一些通用风控硬限制。比如：如果当前账户资金不足，或者该股票已经被调出股票池，即使分数再高也直接返回 False。
-
----
-
-
-### should_sell
-
-```python
-should_sell(
-    code: str,
-    daily_data: pd.Series,
-    position: Dict
-) -> bool
-```
-
-用于：
-
-- 判断是否卖出
-
-卖出/止损信号触发判定，负责监控已经持有的股票，决定什么时候该落袋为安，或者割肉止损。
-
-输入：当前持仓的股票信息、买入成本价、当前最新价格、持有天数。
-
-输出：布尔值 True（卖出）/ False（继续持有）。
-
-基本功能：基类可以内置全局止损/止盈逻辑。例如：默认实现“回撤超过 8% 强制止损”或“触及 20% 自动止盈”。这样子类策略就算不写卖出逻辑，也自带一套防守机制。
+子类只需调用 `super().prepare(df, compute_turn=True)` 或在 `compute_turn` 不同的场景下覆盖。
 
 ---
 
 ### score_stock
 
 ```python
-score_stock(code: str, daily_data: pd.Series) -> float
+score_stock(code: str, stock_data: pd.DataFrame) -> float
 ```
 
-用于：
+模板方法，流程为：
+1. 空数据/价格校验 → 中性 50.0
+2. 调用 `build_factor_scores()` 获取因子字典 + 权重
+3. 调用 `_redistribute_scores()` 处理缺失因子再分配
+4. 记录 completeness + debug 日志
+5. 返回 `finalize_score()` 结果
 
-- 股票评分
-
-评分范围：
-
-```text
-0 ~ 100
-```
-
-股票打分/量化评级，选股的核心。策略会给股票池里的每一只股票打分。分数越高，说明该股票越符合当前策略的选股口味，后续就越优先考虑买入。
-
-输入：单只股票或股票池的预处理数据（由 prepare 提供）。
-
-输出：一个字典或 DataFrame，包含 {'股票代码': 分数/权重}（例如：{'000001.SZ': 85.5}）。
-
-基本功能：基类可以提供一个默认的“等权重”或者“随机打分”作为 Baseline。具体的量化因子打分由子类去重写（Override）。
-
+评分范围：0 ~ 100
 
 ---
 
-## 3. 策略限制
+### build_factor_scores（子类必须实现）
+
+```python
+build_factor_scores(
+    self, code: str, stock_data: pd.DataFrame
+) -> tuple[dict[str, tuple[float, bool]], dict[str, float]]
+```
+
+返回：
+- factor_scores: `{因子名: (得分, 是否缺失)}`
+- weights: `{因子名: 权重}`
+
+---
+
+### finalize_score
+
+```python
+finalize_score(
+    factor_scores: dict[str, tuple[float, bool]],
+    weights: dict[str, float]
+) -> float
+```
+
+统一处理缺失再分配 + completeness + debug 日志，返回最终 0-100 分。
+
+---
+
+## 3. 选股门面（SelectionStrategy）
+
+作为对外唯一入口，持有 `StrategyCombiner` + 4 套子策略：
+
+- `TrendStrategy` — 趋势跟踪（ADX + MA排列 + MACD + 回调买点）
+- `MomentumStrategy` — 动量反转（短期反转 + 多周期动量 + RSI）
+- `VolumePriceStrategy` — 量价共振（量比 + 换手率 + 量价相关 + OBV + 缩量止跌）
+- `QualityStrategy` — 低波质量（波动率 + 偏度 + 下行风险 + 基本面）
+
+门面核心方法：
+
+```python
+score_stock(code, stock_data) -> float
+score_universe(stock_dfs, breadth, avg_vol) -> dict   # 横截面两阶段评分
+filter_stock(daily_data, df) -> bool                   # 筛选：价格/市值/涨跌停/风控
+update_market_filter(all_data) -> None
+update_st_list(st_codes) -> None
+```
+
+---
+
+## 4. 缺失数据处理
+
+由 `base_strategy.py` 中的 `_redistribute_scores()` 统一处理，模式由 `strategy.missing_data.mode` 控制：
+
+| 模式 | 行为 |
+|------|------|
+| redistribute（默认） | 缺失因子剔除，剩余权重归一化 |
+| neutral | 缺失因子按 50 分计入 |
+| penalize | 缺失因子按 30 分计入 |
+| exclude | 任一因子缺失 → 该策略对该股标记 incomplete |
+
+---
+
+## 5. 策略限制
 
 禁止：
 
@@ -117,7 +114,7 @@ score_stock(code: str, daily_data: pd.Series) -> float
 
 ---
 
-## 4. 输出规范
+## 6. 输出规范
 
 所有评分必须：
 
@@ -125,18 +122,25 @@ score_stock(code: str, daily_data: pd.Series) -> float
 - reproducible
 - schema stable
 
-## 5. 调用链路
+---
 
-[开始运行] 
+## 7. 调用链路
+
+```
+[开始运行]
    │
    ▼
-1. prepare() ──────> 批量下载并洗净 K 线数据
+1. prepare() ──────> 统一技术指标计算（按股票分组）
    │
    ▼
-2. score_stock() ──> 遍历股票池，算出每只股票的得分，并从高到低排序
+2. score_stock() ──> 调用 StrategyCombiner → 4 子策略并行评分 → 加权融合
    │
    ▼
-3. should_buy() ───> 挑选高分股票，结合当前仓位，判断是否触发买入信号
+3. filter_stock() ──> 价格/市值/涨跌停/ST/风控多维度过滤
    │
    ▼
-4. should_sell() ──> 盘中/盘后监控已有持仓，判断是否触发止损或止盈信号
+4. score_universe() ──> [可选] 横截面标准化 + 行情自适应权重
+   │
+   ▼
+5. Top-N 排序 ──────> 输出最终候选股票清单
+```

@@ -1,12 +1,87 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from src.core.config import config_loader
 from src.core.logger import get_logger
+from src.indicators.technical_indicators import TechnicalIndicators
+
+
+# ==================== 缺失数据处理（共享） ====================
+
+def _get_missing_mode() -> str:
+    """读取缺失数据处理模式"""
+    return config_loader.get("strategy.missing_data.mode", "redistribute")
+
+
+def _redistribute_scores(
+    factor_scores: dict[str, tuple[float, bool]],
+    factor_weights: dict[str, float],
+    strategy_name: str = "",
+    code: str = "",
+) -> tuple[float, list[str], str]:
+    """
+    根据缺失因子重新分配权重并计算得分。
+
+    Args:
+        factor_scores: {因子名: (得分, 是否缺失)}
+        factor_weights: {因子名: 原始权重}
+
+    Returns:
+        (最终得分, 缺失因子列表, 完整度标签: full/partial/insufficient)
+    """
+    mode = _get_missing_mode()
+    missing = [name for name, (_, m) in factor_scores.items() if m]
+
+    if mode == "neutral":
+        # 中性模式：缺失因子当50分，按原权重计入
+        total_w = sum(factor_weights.values())
+        score = sum(
+            factor_scores[name][0] * factor_weights[name]
+            for name in factor_scores
+        ) / total_w if total_w > 0 else 50.0
+        completeness = "full" if not missing else "partial"
+        return score, missing, completeness
+
+    if mode == "penalize":
+        # 惩罚模式：缺失因子给30分（低于中性50），按原权重计入
+        total_w = sum(factor_weights.values())
+        score = 0.0
+        for name in factor_scores:
+            s, m = factor_scores[name]
+            score += (30.0 if m else s) * factor_weights[name]
+        score = score / total_w if total_w > 0 else 50.0
+        completeness = "full" if not missing else "partial"
+        return score, missing, completeness
+
+    if mode == "exclude":
+        # 排除模式：任何因子缺失 → 该策略直接标记 incomplete
+        if missing:
+            return 50.0, missing, "insufficient"
+        total_w = sum(factor_weights.values())
+        score = sum(
+            factor_scores[name][0] * factor_weights[name]
+            for name in factor_scores
+        ) / total_w if total_w > 0 else 50.0
+        return score, missing, "full"
+
+    # 默认 redistribute：缺失因子排除，剩余权重归一化
+    active_weights = {name: w for name, w in factor_weights.items() if name not in missing}
+    if not active_weights:
+        return 50.0, missing, "insufficient"
+
+    total_w = sum(active_weights.values())
+    score = sum(
+        factor_scores[name][0] * active_weights[name]
+        for name in active_weights
+    ) / total_w
+
+    completeness = "full" if not missing else "partial"
+    return score, missing, completeness
 
 
 @dataclass
@@ -52,7 +127,7 @@ class BaseStrategy(ABC):
         self.take_profit_pct = config.get("take_profit_pct", 20.0)
         self.max_position_pct = config.get("max_position_pct", 30.0)
         self.max_positions = config.get("max_positions", 10)
-        self.min_score_threshold = selection_config.get("min_score_threshold", 70.0)
+        self.min_score_threshold = selection_config.get("min_score_threshold", 50.0)
         
         # 交易频率控制
         self.cooldown_days = selection_config.get("cooldown_days", 5)
@@ -65,15 +140,104 @@ class BaseStrategy(ABC):
         self._daily_trade_counts: dict[str, int] = {}
         
         self._prepared_data: pd.DataFrame | None = None
+
+        # 分数完整度追踪（供 get_score_completeness 使用）
+        self._last_completeness: str = "unknown"
+        self._last_missing_factors: list[str] = []
     
-    @abstractmethod
-    def prepare(self, df: pd.DataFrame) -> pd.DataFrame:
-        pass
-    
-    @abstractmethod
-    def score_stock(self, code: str, daily_data: pd.Series) -> float:
-        pass
-    
+    def prepare(self, df: pd.DataFrame, compute_turn: bool = False) -> pd.DataFrame:
+        """
+        统一准备数据：按 code 分组计算全量技术指标，避免多股票拼接时跨边界污染。
+
+        Args:
+            df: 含 close_price/volume 等列的行情 DataFrame（可含多只股票）
+            compute_turn: 是否额外计算 turn（换手率近似），量价策略需要
+        """
+        tech = getattr(self, "_tech_indicators", None) or TechnicalIndicators()
+        df = df.copy()
+
+        if "code" in df.columns and df["code"].nunique() > 1:
+            result_frames = []
+            for _code, group in df.groupby("code", sort=False):
+                group = group.copy()
+                group["pct_chg"] = group["close_price"].pct_change() * 100
+                group = tech.add_all_indicators(group)
+                if compute_turn and "turn" not in group.columns and "volume" in group.columns:
+                    avg_vol = group["volume"].rolling(window=20, min_periods=1).mean()
+                    group["turn"] = (group["volume"] / avg_vol.replace(0, np.nan)) * 100
+                result_frames.append(group)
+            return pd.concat(result_frames, ignore_index=True)
+
+        df["pct_chg"] = df["close_price"].pct_change() * 100
+        df = tech.add_all_indicators(df)
+        if compute_turn and "turn" not in df.columns and "volume" in df.columns:
+            avg_vol = df["volume"].rolling(window=20, min_periods=1).mean()
+            df["turn"] = (df["volume"] / avg_vol.replace(0, np.nan)) * 100
+        return df
+
+    def score_stock(self, code: str, stock_data: pd.DataFrame) -> float:
+        """
+        通用子策略评分模板：空数据/价格校验 → 各因子评分 → 缺失再分配。
+
+        子类只需实现 :meth:`build_factor_scores` 返回 (因子分数字典, 权重字典)。
+        """
+        self._last_missing_factors = []
+        self._last_completeness = "unknown"
+
+        if stock_data.empty:
+            self._last_completeness = "insufficient"
+            self._last_missing_factors = ["all"]
+            return 50.0
+
+        latest = stock_data.iloc[-1]
+        close_price = latest.get("close_price", 0)
+        if pd.isna(close_price) or close_price <= 0:
+            self._last_completeness = "insufficient"
+            self._last_missing_factors = ["price"]
+            return 50.0
+
+        factor_scores, weights = self.build_factor_scores(code, stock_data)
+        return self.finalize_score(factor_scores, weights, code)
+
+    def build_factor_scores(
+        self, code: str, stock_data: pd.DataFrame
+    ) -> tuple[dict[str, tuple[float, bool]], dict[str, float]]:
+        """
+        子类实现：返回 (因子分数字典 {名: (分, 是否缺失)}, 权重字典 {名: 权重})。
+
+        若子类完全自定义 score_stock（如 SelectionStrategy），可不实现本方法。
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} 必须实现 build_factor_scores 或重写 score_stock"
+        )
+
+    def finalize_score(
+        self,
+        factor_scores: dict[str, tuple[float, bool]],
+        weights: dict[str, float],
+        code: str,
+    ) -> float:
+        """统一处理缺失再分配 + 完整度记录 + debug 日志，返回最终得分。"""
+        score, missing, completeness = _redistribute_scores(
+            factor_scores, weights, self.strategy_name, code
+        )
+        self._last_missing_factors = missing
+        self._last_completeness = completeness
+
+        if missing:
+            self.logger.debug(
+                f"{self.strategy_name} factors missing for {code}",
+                missing_factors=missing,
+                completeness=completeness,
+            )
+        return score
+
+    def get_score_completeness(self) -> dict:
+        return {
+            "completeness": getattr(self, "_last_completeness", "unknown"),
+            "missing_factors": getattr(self, "_last_missing_factors", []),
+        }
+
     def should_buy(self, code: str, daily_data: pd.Series, ctx: StrategyContext) -> bool:
         self._validate_no_future_data(daily_data)
         

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { strategyApi } from '@/api'
 
@@ -20,13 +20,25 @@ const form = ref({
   max_positions: 10,
   top_n: 20,
   min_score_threshold: 70.0,
-  ma_alignment_weight: 40,
-  price_position_weight: 30,
-  trend_strength_weight: 30,
+  // 5因子权重
+  trend_weight: 30,
+  momentum_weight: 25,
+  volume_weight: 20,
+  volatility_weight: 15,
+  fundamental_weight: 10,
+  // 风控开关
+  enable_risk_control: true,
+  enable_st_filter: true,
+  enable_limit_filter: true,
+  // 高级评分（实验性，默认关闭）
+  cross_sectional_enabled: false,
+  regime_enabled: false,
 })
 
-const weightTotal = () =>
-  form.value.ma_alignment_weight + form.value.price_position_weight + form.value.trend_strength_weight
+const weightTotal = computed(() =>
+  form.value.trend_weight + form.value.momentum_weight + form.value.volume_weight +
+  form.value.volatility_weight + form.value.fundamental_weight
+)
 
 onMounted(async () => {
   loading.value = true
@@ -153,33 +165,90 @@ const reset = async () => {
       </el-col>
     </el-row>
 
-    <!-- 评分权重 -->
-    <h2 class="section-title">评分权重配置</h2>
+    <!-- 5因子评分权重 -->
+    <h2 class="section-title">评分权重配置（5因子）</h2>
+    <el-row :gutter="16">
+      <el-col :span="4">
+        <el-form-item label="趋势(%)">
+          <el-slider v-model="form.trend_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">MA排列 + MACD</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="4">
+        <el-form-item label="动量(%)">
+          <el-slider v-model="form.momentum_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">RSI + 涨跌幅</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="4">
+        <el-form-item label="成交量(%)">
+          <el-slider v-model="form.volume_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">量比</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="4">
+        <el-form-item label="波动率(%)">
+          <el-slider v-model="form.volatility_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">布林带位置</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="4">
+        <el-form-item label="基本面(%)">
+          <el-slider v-model="form.fundamental_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">PE/PB/ROE</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="4">
+        <el-alert
+          :type="weightTotal === 100 ? 'success' : 'warning'"
+          :closable="false"
+          style="height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; min-height: 80px"
+        >
+          <div style="font-size: 20px; font-weight: bold">{{ weightTotal }}%</div>
+          <div style="font-size: 12px">{{ weightTotal === 100 ? '✓ 已平衡' : '⚠ 建议100%' }}</div>
+        </el-alert>
+      </el-col>
+    </el-row>
+
+    <!-- 风控配置 -->
+    <h2 class="section-title">风控配置</h2>
     <el-row :gutter="20">
       <el-col :span="8">
-        <el-form-item label="均线排列权重(%)">
-          <el-slider v-model="form.ma_alignment_weight" :min="0" :max="100" show-input style="width: 100%" />
+        <el-form-item>
+          <el-checkbox v-model="form.enable_risk_control" label="启用风控" size="large" />
+          <div class="factor-hint" style="margin-left: 24px">涨停/ST 过滤</div>
         </el-form-item>
       </el-col>
       <el-col :span="8">
-        <el-form-item label="价格位置权重(%)">
-          <el-slider v-model="form.price_position_weight" :min="0" :max="100" show-input style="width: 100%" />
+        <el-form-item>
+          <el-checkbox v-model="form.enable_st_filter" label="ST股过滤" size="large" />
+          <div class="factor-hint" style="margin-left: 24px">自动过滤ST退市风险股票</div>
         </el-form-item>
       </el-col>
       <el-col :span="8">
-        <el-form-item label="趋势强度权重(%)">
-          <el-slider v-model="form.trend_strength_weight" :min="0" :max="100" show-input style="width: 100%" />
+        <el-form-item>
+          <el-checkbox v-model="form.enable_limit_filter" label="涨停股过滤" size="large" />
+          <div class="factor-hint" style="margin-left: 24px">当日涨停不可买入</div>
         </el-form-item>
       </el-col>
     </el-row>
 
-    <el-alert
-      :type="weightTotal() === 100 ? 'success' : 'warning'"
-      :closable="false"
-      style="margin-bottom: 20px"
-    >
-      权重总和：{{ weightTotal() }}% {{ weightTotal() === 100 ? '✓' : '（建议调整为100%）' }}
-    </el-alert>
+    <!-- 高级评分（实验性） -->
+    <h2 class="section-title">高级评分（实验性）</h2>
+    <el-row :gutter="20">
+      <el-col :span="8">
+        <el-form-item>
+          <el-checkbox v-model="form.cross_sectional_enabled" label="横截面标准化" size="large" />
+          <div class="factor-hint" style="margin-left: 24px">按全市场横截面归一化子策略得分</div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="8">
+        <el-form-item>
+          <el-checkbox v-model="form.regime_enabled" label="行情自适应权重" size="large" />
+          <div class="factor-hint" style="margin-left: 24px">依据市场广度/波动率切换子策略权重</div>
+        </el-form-item>
+      </el-col>
+    </el-row>
 
     <!-- 操作按钮 -->
     <div style="text-align: center; padding: 20px 0">
@@ -188,3 +257,11 @@ const reset = async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.factor-hint {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 2px;
+}
+</style>

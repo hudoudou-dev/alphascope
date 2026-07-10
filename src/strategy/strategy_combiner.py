@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 
@@ -48,31 +47,23 @@ class WeightedAverageCombiner(BaseStrategyCombiner):
         return weighted_sum / total_weight
 
 
-class VotingCombiner(BaseStrategyCombiner):
-    
-    def __init__(self, threshold: float = 60.0):
-        self.threshold = threshold
-    
-    def combine(self, scores: list[StrategyScore]) -> float:
-        if not scores:
-            return 50.0
-        
-        buy_votes = sum(1 for s in scores if s.score >= self.threshold)
-        sell_votes = sum(1 for s in scores if s.score <= (100 - self.threshold))
-        
-        if buy_votes > len(scores) / 2:
-            return 75.0
-        if sell_votes > len(scores) / 2:
-            return 25.0
-        
-        return 50.0
-
-
 class StrategyCombiner:
+    """
+    多策略组合器
     
-    def __init__(self, combiner: BaseStrategyCombiner | None = None):
+    支持两种数据模式：
+    1. 统一数据模式（默认）：所有策略共享同一份 prepared 数据
+    2. 独立数据模式：每个策略独立 prepare（兼容旧接口）
+    """
+    
+    def __init__(
+        self,
+        combiner: BaseStrategyCombiner | None = None,
+        unified_data: bool = True,
+    ):
         self.combiner = combiner or WeightedAverageCombiner()
         self.strategies: list[BaseStrategy] = []
+        self.unified_data = unified_data
     
     def add_strategy(self, strategy: BaseStrategy) -> None:
         self.strategies.append(strategy)
@@ -84,54 +75,67 @@ class StrategyCombiner:
                 return True
         return False
     
-    def prepare_combined(self, df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    def get_strategy(self, strategy_name: str) -> BaseStrategy | None:
+        for s in self.strategies:
+            if s.strategy_name == strategy_name:
+                return s
+        return None
+    
+    def prepare_combined(self, df: pd.DataFrame) -> pd.DataFrame | dict[str, pd.DataFrame]:
+        """
+        准备数据：
+        - 统一模式：返回一份全量指标 DataFrame
+        - 独立模式：返回 dict[strategy_name -> DataFrame]
+        """
+        if self.unified_data and self.strategies:
+            # 统一模式：用第一个策略 prepare 即可（指标都一样）
+            return self.strategies[0].prepare(df)
+        
         prepared = {}
         for strategy in self.strategies:
             prepared[strategy.strategy_name] = strategy.prepare(df)
         return prepared
     
-    def score_combined(
+    def score_stock_unified(
         self,
         code: str,
-        daily_data: dict[str, pd.Series],
-    ) -> float:
+        stock_data: pd.DataFrame,
+    ) -> tuple[float, dict[str, float]]:
+        """
+        统一数据模式下对单只股票评分
+
+        返回：(综合评分, {策略名: 分项得分})
+        """
         scores = []
-        
+        detail_scores = {}
+
         for strategy in self.strategies:
-            if strategy.strategy_name not in daily_data:
-                continue
-            
-            score = strategy.score_stock(code, daily_data[strategy.strategy_name])
+            score = strategy.score_stock(code, stock_data)
             scores.append(StrategyScore(
                 strategy_name=strategy.strategy_name,
                 score=score,
             ))
-        
-        return self.combiner.combine(scores)
+            detail_scores[strategy.strategy_name] = round(score, 2)
+
+        combined = self.combiner.combine(scores)
+        return combined, detail_scores
+
+    def get_completeness_info(self) -> dict[str, dict]:
+        """
+        收集所有子策略最近一次评分的完整度信息。
+
+        返回：{策略名: {completeness, missing_factors}}
+        """
+        info = {}
+        for strategy in self.strategies:
+            if hasattr(strategy, "get_score_completeness"):
+                info[strategy.strategy_name] = strategy.get_score_completeness()
+            else:
+                info[strategy.strategy_name] = {"completeness": "unknown", "missing_factors": []}
+        return info
     
-    def execute_combined(
-        self,
-        df: pd.DataFrame,
-        ctx: Any,
-    ) -> dict[str, list[str]]:
-        prepared = self.prepare_combined(df)
-        
-        daily_data_map = {}
-        for strategy_name, prepared_df in prepared.items():
-            code_df = prepared_df[prepared_df["code"] == ctx.positions.keys()]
-            if not code_df.empty:
-                daily_data_map[strategy_name] = code_df.iloc[-1]
-        
-        combined_scores = {}
-        for code in ctx.positions.keys():
-            if code in daily_data_map:
-                combined_scores[code] = self.score_combined(code, daily_data_map)
-        
-        buy_signals = [code for code, score in combined_scores.items() if score >= 60]
-        sell_signals = [code for code, score in combined_scores.items() if score <= 40]
-        
-        return {
-            "buy_signals": buy_signals,
-            "sell_signals": sell_signals,
-            "scores": combined_scores,
-        }
+    def get_weights_info(self) -> dict[str, float]:
+        """获取当前融合权重"""
+        if isinstance(self.combiner, WeightedAverageCombiner):
+            return dict(self.combiner.weights) if self.combiner.weights else {}
+        return {}

@@ -1,13 +1,13 @@
 """
-选股策略类
+选股策略类（多策略组合门面）
 
-结合用户配置的超参进行评分，包括：
-- 市值区间筛选
-- 股价区间筛选
-- 涨跌停配置筛选
-- 均线排列评分
-- 价格位置评分
-- 趋势强度评分
+作为对外统一的选股入口，内部通过 StrategyCombiner 管理4套子策略：
+- TrendStrategy:     趋势跟踪（权重30%）— ADX+MA+MACD+回调买点
+- MomentumStrategy:  动量反转（权重25%）— 短期反转+多周期动量+RSI
+- VolumePriceStrategy: 量价共振（权重25%）— 量比+换手率+量价相关+OBV
+- QualityStrategy:   低波质量（权重20%）— 波动率+偏度+基本面
+
+同时保留原有的筛选、风控等功能。
 """
 
 from dataclasses import dataclass
@@ -19,7 +19,22 @@ import pandas as pd
 from src.core.config import config_loader
 from src.core.logger import get_logger
 from src.indicators.technical_indicators import TechnicalIndicators
+from src.indicators.fundamental_indicators import FundamentalIndicators
+from src.indicators.factor_normalizer import FactorNormalizer
 from src.strategy.base_strategy import BaseStrategy
+from src.strategy.risk_control import RiskControl, RiskControlConfig, MarketFilter
+from src.strategy.strategy_combiner import (
+    StrategyCombiner,
+    WeightedAverageCombiner,
+)
+from src.strategy.sub_strategies import (
+    TrendStrategy,
+    MomentumStrategy,
+    VolumePriceStrategy,
+    QualityStrategy,
+    SubStrategyWeights,
+)
+from src.strategy.regime import MarketRegime, RegimeDetector
 
 
 @dataclass
@@ -42,40 +57,27 @@ class SelectionConfig:
     initial_cash: float = 1000000.0  # 初始资金量（元）
     max_positions: int = 10  # 最大持仓股票数量
     top_n: int = 20  # 候选股票数量（Top-N）
-    min_score_threshold: float = 70.0  # 最小评分阈值（提高到70.0，降低交易频率）
+    min_score_threshold: float = 50.0  # 最小评分阈值（中性=50，结合回调买点因子后50即可入选）
     
     # 交易频率控制
     cooldown_days: int = 5  # 冷却期（卖出后多少天内不能重新买入同一只股票）
     max_trades_per_day: int = 5  # 每天最大交易次数
     
-    # 评分权重配置
-    ma_alignment_weight: float = 40.0  # 均线排列权重（%）
-    price_position_weight: float = 30.0  # 价格位置权重（%）
-    trend_strength_weight: float = 30.0  # 趋势强度权重（%）
+    # ============ 5因子评分权重（总和=100%） ============
+    trend_weight: float = 35.0       # 趋势信号权重（%）
+    momentum_weight: float = 25.0    # 动量信号权重（%）
+    volume_weight: float = 20.0      # 成交量信号权重（%）
+    volatility_weight: float = 10.0  # 波动率信号权重（%）
+    fundamental_weight: float = 10.0 # 基本面权重（%，数据不可得时自动重新分配）
     
-    # 均线排列评分参数
-    score_ma_perfect_bull: float = 85.0  # 完美多头排列评分
-    score_ma_partial_bull: float = 75.0  # 部分多头排列评分
-    score_ma_short_bull: float = 65.0  # 短期多头排列评分
-    score_ma_perfect_bear: float = 25.0  # 完美空头排列评分
-    score_ma_partial_bear: float = 35.0  # 部分空头排列评分
-    score_ma_short_bear: float = 45.0  # 短期空头排列评分
-    score_ma_neutral: float = 50.0  # 中性评分
+    # ============ 风控配置 ============
+    enable_risk_control: bool = True        # 是否启用风控
+    enable_st_filter: bool = True           # ST股过滤
+    enable_limit_filter: bool = True        # 涨停过滤
     
-    # 价格位置评分参数
-    score_price_all_above: float = 85.0  # 价格在所有均线之上评分
-    score_price_3_above: float = 75.0  # 价格在3条均线之上评分
-    score_price_2_above: float = 65.0  # 价格在2条均线之上评分
-    score_price_1_above: float = 55.0  # 价格在1条均线之上评分
-    score_price_all_below: float = 25.0  # 价格在所有均线之下评分
-    score_price_3_below: float = 35.0  # 价格在3条均线之下评分
-    score_price_2_below: float = 45.0  # 价格在2条均线之下评分
-    score_price_neutral: float = 50.0  # 中性评分
-    
-    # 趋势强度评分参数
-    score_trend_base: float = 50.0  # 基础评分
-    score_trend_ma_spread_max: float = 20.0  # 均线发散加分最大值
-    score_trend_price_spread_max: float = 15.0  # 价格距离加分最大值
+    # 横截面标准化 / 行情自适应（默认关闭，开启后改变打分相对性，不改变默认路径）
+    cross_sectional_enabled: bool = False   # 横截面标准化打分
+    regime_enabled: bool = False            # 行情自适应子策略权重
     
     @classmethod
     def from_config(cls) -> "SelectionConfig":
@@ -95,33 +97,22 @@ class SelectionConfig:
             initial_cash=config.get("initial_cash", 1000000.0),
             max_positions=config.get("max_positions", 10),
             top_n=config.get("top_n", 20),
-            min_score_threshold=config.get("min_score_threshold", 70.0),
+            min_score_threshold=config.get("min_score_threshold", 50.0),
             cooldown_days=config.get("cooldown_days", 5),
             max_trades_per_day=config.get("max_trades_per_day", 5),
-            ma_alignment_weight=config.get("ma_alignment_weight", 40.0),
-            price_position_weight=config.get("price_position_weight", 30.0),
-            trend_strength_weight=config.get("trend_strength_weight", 30.0),
-            # 均线排列评分参数
-            score_ma_perfect_bull=config.get("score_ma_perfect_bull", 85.0),
-            score_ma_partial_bull=config.get("score_ma_partial_bull", 75.0),
-            score_ma_short_bull=config.get("score_ma_short_bull", 65.0),
-            score_ma_perfect_bear=config.get("score_ma_perfect_bear", 25.0),
-            score_ma_partial_bear=config.get("score_ma_partial_bear", 35.0),
-            score_ma_short_bear=config.get("score_ma_short_bear", 45.0),
-            score_ma_neutral=config.get("score_ma_neutral", 50.0),
-            # 价格位置评分参数
-            score_price_all_above=config.get("score_price_all_above", 85.0),
-            score_price_3_above=config.get("score_price_3_above", 75.0),
-            score_price_2_above=config.get("score_price_2_above", 65.0),
-            score_price_1_above=config.get("score_price_1_above", 55.0),
-            score_price_all_below=config.get("score_price_all_below", 25.0),
-            score_price_3_below=config.get("score_price_3_below", 35.0),
-            score_price_2_below=config.get("score_price_2_below", 45.0),
-            score_price_neutral=config.get("score_price_neutral", 50.0),
-            # 趋势强度评分参数
-            score_trend_base=config.get("score_trend_base", 50.0),
-            score_trend_ma_spread_max=config.get("score_trend_ma_spread_max", 20.0),
-            score_trend_price_spread_max=config.get("score_trend_price_spread_max", 15.0),
+            # 5因子权重
+            trend_weight=config.get("trend_weight", 30.0),
+            momentum_weight=config.get("momentum_weight", 25.0),
+            volume_weight=config.get("volume_weight", 20.0),
+            volatility_weight=config.get("volatility_weight", 15.0),
+            fundamental_weight=config.get("fundamental_weight", 10.0),
+            # 风控配置
+            enable_risk_control=config.get("enable_risk_control", True),
+            enable_st_filter=config.get("enable_st_filter", True),
+            enable_limit_filter=config.get("enable_limit_filter", True),
+            # 横截面 / 行情自适应开关
+            cross_sectional_enabled=config.get("cross_sectional_enabled", False),
+            regime_enabled=config.get("regime_enabled", False),
         )
     
     def to_config_dict(self) -> dict[str, Any]:
@@ -142,35 +133,24 @@ class SelectionConfig:
             "min_score_threshold": self.min_score_threshold,
             "cooldown_days": self.cooldown_days,
             "max_trades_per_day": self.max_trades_per_day,
-            "ma_alignment_weight": self.ma_alignment_weight,
-            "price_position_weight": self.price_position_weight,
-            "trend_strength_weight": self.trend_strength_weight,
-            # 均线排列评分参数
-            "score_ma_perfect_bull": self.score_ma_perfect_bull,
-            "score_ma_partial_bull": self.score_ma_partial_bull,
-            "score_ma_short_bull": self.score_ma_short_bull,
-            "score_ma_perfect_bear": self.score_ma_perfect_bear,
-            "score_ma_partial_bear": self.score_ma_partial_bear,
-            "score_ma_short_bear": self.score_ma_short_bear,
-            "score_ma_neutral": self.score_ma_neutral,
-            # 价格位置评分参数
-            "score_price_all_above": self.score_price_all_above,
-            "score_price_3_above": self.score_price_3_above,
-            "score_price_2_above": self.score_price_2_above,
-            "score_price_1_above": self.score_price_1_above,
-            "score_price_all_below": self.score_price_all_below,
-            "score_price_3_below": self.score_price_3_below,
-            "score_price_2_below": self.score_price_2_below,
-            "score_price_neutral": self.score_price_neutral,
-            # 趋势强度评分参数
-            "score_trend_base": self.score_trend_base,
-            "score_trend_ma_spread_max": self.score_trend_ma_spread_max,
-            "score_trend_price_spread_max": self.score_trend_price_spread_max,
+            # 5因子权重
+            "trend_weight": self.trend_weight,
+            "momentum_weight": self.momentum_weight,
+            "volume_weight": self.volume_weight,
+            "volatility_weight": self.volatility_weight,
+            "fundamental_weight": self.fundamental_weight,
+            # 风控配置
+            "enable_risk_control": self.enable_risk_control,
+            "enable_st_filter": self.enable_st_filter,
+            "enable_limit_filter": self.enable_limit_filter,
+            # 横截面 / 行情自适应开关
+            "cross_sectional_enabled": self.cross_sectional_enabled,
+            "regime_enabled": self.regime_enabled,
         }
 
 
 class SelectionStrategy(BaseStrategy):
-    """选股策略类"""
+    """选股策略类 — 多策略组合门面 + 风控过滤"""
     
     def __init__(self, config: SelectionConfig | None = None):
         super().__init__(strategy_name="SelectionStrategy")
@@ -178,361 +158,297 @@ class SelectionStrategy(BaseStrategy):
         self.config = config or SelectionConfig.from_config()
         self.logger = get_logger(self.strategy_name)
         
-        # 确保权重总和为100%
-        total_weight = (
-            self.config.ma_alignment_weight
-            + self.config.price_position_weight
-            + self.config.trend_strength_weight
+        # 技术指标计算器（用于 prepare 统一计算全量指标）
+        self._tech_indicators = TechnicalIndicators()
+        # 基本面指标计算器（保留兼容）
+        self._fund_indicators = FundamentalIndicators()
+        
+        # 风控组件
+        risk_cfg = RiskControlConfig(
+            enable_st_filter=self.config.enable_st_filter,
+            enable_limit_filter=self.config.enable_limit_filter,
+        )
+        self._risk_control = RiskControl(risk_cfg)
+        self._market_filter = MarketFilter()
+        
+        # ===== 多策略组合器（核心）=====
+        sub_weights = SubStrategyWeights.from_config()
+        normalized = sub_weights.normalize()
+        
+        self._combiner = StrategyCombiner(
+            combiner=WeightedAverageCombiner(weights={
+                "TrendStrategy": normalized.get("trend", 30) / 100,
+                "MomentumStrategy": normalized.get("momentum", 25) / 100,
+                "VolumePriceStrategy": normalized.get("volume_price", 25) / 100,
+                "QualityStrategy": normalized.get("quality", 20) / 100,
+            }),
+            unified_data=True,
         )
         
-        if total_weight != 100.0:
-            self.logger.warning(
-                "权重总和不为100%，将自动调整",
-                total_weight=total_weight,
-            )
-            # 自动调整权重
-            scale_factor = 100.0 / total_weight
-            self.config.ma_alignment_weight *= scale_factor
-            self.config.price_position_weight *= scale_factor
-            self.config.trend_strength_weight *= scale_factor
+        # 注册4套子策略
+        self._combiner.add_strategy(TrendStrategy())
+        self._combiner.add_strategy(MomentumStrategy())
+        self._combiner.add_strategy(VolumePriceStrategy())
+        self._combiner.add_strategy(QualityStrategy())
+        
+        # 子策略基础权重（归一化后，总和=1），供横截面/regime 重加权使用
+        self._sub_weights: dict[str, float] = {
+            "TrendStrategy": normalized.get("trend", 30) / 100,
+            "MomentumStrategy": normalized.get("momentum", 25) / 100,
+            "VolumePriceStrategy": normalized.get("volume_price", 25) / 100,
+            "QualityStrategy": normalized.get("quality", 20) / 100,
+        }
+        
+        # 横截面标准化 / 行情自适应开关（默认关闭，向后兼容）
+        cs_cfg = config_loader.get("strategy.cross_sectional", {})
+        regime_cfg = config_loader.get("strategy.regime", {})
+        self._cross_sectional_enabled = bool(self.config.cross_sectional_enabled)
+        self._cs_method = cs_cfg.get("method", "zscore")
+        self._regime_enabled = bool(self.config.regime_enabled)
+        self._regime_detector = RegimeDetector(regime_cfg)
+        self._last_regime: MarketRegime | None = None
+        
+        self.logger.info(
+            "SelectionStrategy 初始化完成（多策略组合模式）",
+            sub_strategies=[s.strategy_name for s in self._combiner.strategies],
+            weights=normalized,
+        )
     
     def prepare(self, df: pd.DataFrame) -> pd.DataFrame:
-        """准备数据，计算技术指标"""
-        indicators = TechnicalIndicators()
-        
-        # 计算均线
-        df = indicators.add_ma(df, periods=[5, 10, 20, 60])
-        
-        # 计算涨跌幅
-        df["pct_chg"] = df["close_price"].pct_change() * 100
-        
-        return df
+        """准备数据：复用基类统一计算全量技术指标（含 turn 换手率），按股票分组避免跨边界污染"""
+        return super().prepare(df, compute_turn=True)
     
     def score_stock(self, code: str, stock_data: pd.DataFrame) -> float:
         """
-        对股票进行评分
+        多策略组合综合评分
         
-        评分逻辑：
-        1. 均线排列评分（权重：ma_alignment_weight）
-        2. 价格位置评分（权重：price_position_weight）
-        3. 趋势强度评分（权重：trend_strength_weight）
-        4. 涨跌停次数评分（基于limit_stat_period参数）
-        
-        参数：
-        - code: 股票代码
-        - stock_data: 股票数据（DataFrame，包含limit_stat_period天的数据）
+        通过 StrategyCombiner 融合4套子策略的评分：
+        - TrendStrategy:     趋势跟踪
+        - MomentumStrategy:  动量反转
+        - VolumePriceStrategy: 量价共振
+        - QualityStrategy:   低波质量
         
         返回：综合评分（0-100）
         """
-        # 检查数据是否为空
         if stock_data.empty:
             return 50.0
         
-        # 获取最新一天的数据
-        latest_data = stock_data.iloc[-1]
-        
-        # 获取均线数据
-        ma5 = latest_data.get("ma5", 0)
-        ma10 = latest_data.get("ma10", 0)
-        ma20 = latest_data.get("ma20", 0)
-        ma60 = latest_data.get("ma60", 0)
-        close_price = latest_data.get("close_price", 0)
-        
-        # 如果数据不完整，返回中性评分
-        if ma5 <= 0 or ma10 <= 0 or ma20 <= 0 or close_price <= 0:
+        latest = stock_data.iloc[-1]
+        close_price = latest.get("close_price", 0)
+        if pd.isna(close_price) or close_price <= 0:
             return 50.0
         
-        # 1. 均线排列评分（0-100）
-        ma_alignment_score = self._score_ma_alignment(
-            close_price, ma5, ma10, ma20, ma60
+        # 通过组合器计算多策略综合评分
+        combined_score, self._last_detail_scores = self._combiner.score_stock_unified(
+            code, stock_data
         )
         
-        # 2. 价格位置评分（0-100）
-        price_position_score = self._score_price_position(
-            close_price, ma5, ma10, ma20, ma60
-        )
+        # 收集子策略完整度信息
+        self._last_completeness_info = self._collect_completeness(code)
         
-        # 3. 趋势强度评分（0-100）
-        trend_strength_score = self._score_trend_strength(
-            close_price, ma5, ma10, ma20, ma60
-        )
+        # --- 长期强势股额外加分 ---
+        ma20 = latest.get("ma20", 0)
+        ma60 = latest.get("ma60", 0)
+        if close_price > ma20 > ma60 > 0:
+            combined_score += 3.0
         
-        # 4. 涨跌停次数评分（0-100）
-        limit_stat_score = self._score_limit_stat(stock_data)
+        # --- 涨跌停惩罚 ---
+        limit_penalty = self._calc_limit_penalty(stock_data)
+        combined_score *= limit_penalty
         
-        # 计算加权综合评分
-        total_score = (
-            ma_alignment_score * self.config.ma_alignment_weight / 100.0
-            + price_position_score * self.config.price_position_weight / 100.0
-            + trend_strength_score * self.config.trend_strength_weight / 100.0
-        )
-        
-        # 如果涨跌停次数评分较低，降低总评分
-        if limit_stat_score < 50.0:
-            total_score *= (limit_stat_score / 50.0)
-        
-        return total_score
+        return max(0.0, min(100.0, combined_score))
     
-    def _score_ma_alignment(
+    def get_last_detail_scores(self) -> dict[str, float]:
+        """获取最近一次评分的子策略分项得分"""
+        return getattr(self, "_last_detail_scores", {})
+    
+    def score_universe(
         self,
-        close_price: float,
-        ma5: float,
-        ma10: float,
-        ma20: float,
-        ma60: float,
-    ) -> float:
+        stock_dfs: dict[str, pd.DataFrame],
+        breadth: float | None = None,
+        avg_vol: float | None = None,
+    ) -> dict[str, dict]:
         """
-        均线排列评分
-        
-        评分逻辑：
-        - 多头排列（MA5 > MA10 > MA20 > MA60）：完美多头排列评分
-        - 部分多头排列（MA5 > MA10 > MA20）：部分多头排列评分
-        - 短期多头排列（MA5 > MA10）：短期多头排列评分
-        - 空头排列（MA5 < MA10 < MA20 < MA60）：完美空头排列评分
-        - 部分空头排列（MA5 < MA10 < MA20）：部分空头排列评分
-        - 短期空头排列（MA5 < MA10）：短期空头排列评分
-        - 其他情况：中性评分
+        横截面两阶段打分（默认关闭，仅 cross_sectional/regime 开启时由选股路由调用）。
+
+        Pass1：对 universe 中每只股票计算 4 子策略原始分项得分；
+        Pass2（cross_sectional 开启）：按全市场横截面 zscore/rank 归一化到 0-100；
+        （regime 开启）：依据 breadth/avg_vol 推导行情状态并切换子策略权重；
+        最终按（自适应）权重融合为综合得分。
+
+        Returns: {code: {"score", "detail"(归一化后子策略分), "completeness", "regime"}}
         """
-        if close_price > ma5 > ma10 > ma20 > ma60:
-            return self.config.score_ma_perfect_bull  # 完美多头排列
-        elif close_price > ma5 > ma10 > ma20:
-            return self.config.score_ma_partial_bull  # 部分多头排列
-        elif close_price > ma5 > ma10:
-            return self.config.score_ma_short_bull  # 短期多头排列
-        elif close_price < ma5 < ma10 < ma20 < ma60:
-            return self.config.score_ma_perfect_bear  # 完美空头排列
-        elif close_price < ma5 < ma10 < ma20:
-            return self.config.score_ma_partial_bear  # 部分空头排列
-        elif close_price < ma5 < ma10:
-            return self.config.score_ma_short_bear  # 短期空头排列
+        if not stock_dfs:
+            return {}
+
+        # Pass1：原始子策略分项得分
+        raw: dict[str, dict[str, float]] = {}
+        completeness_map: dict[str, dict] = {}
+        for code, df in stock_dfs.items():
+            _, detail = self._combiner.score_stock_unified(code, df)
+            raw[code] = detail
+            completeness_map[code] = self._combiner.get_completeness_info()
+
+        # 权重（regime 自适应或基础权重）
+        weights = dict(self._sub_weights)
+        regime = None
+        if self._regime_enabled and breadth is not None and avg_vol is not None:
+            regime = self._regime_detector.detect(breadth, avg_vol)
+            weights = self._regime_detector.regime_weights(regime, self._sub_weights)
+            self._last_regime = regime
+
+        # 横截面归一化
+        if self._cross_sectional_enabled:
+            normalizer = FactorNormalizer(method=self._cs_method)
+            norm_raw = normalizer.normalize_universe(raw)
         else:
-            return self.config.score_ma_neutral  # 中性
+            norm_raw = raw
+
+        results: dict[str, dict] = {}
+        for code, detail in norm_raw.items():
+            wsum = sum(weights.get(s, 0.0) for s in detail) or 1.0
+            score = sum(detail[s] * weights.get(s, 0.0) for s in detail) / wsum
+            results[code] = {
+                "score": max(0.0, min(100.0, score)),
+                "detail": detail,
+                "completeness": completeness_map.get(code, {}),
+                "regime": regime.value if regime else None,
+            }
+        return results
     
-    def _score_price_position(
-        self,
-        close_price: float,
-        ma5: float,
-        ma10: float,
-        ma20: float,
-        ma60: float,
-    ) -> float:
-        """
-        价格位置评分
-        
-        评分逻辑：
-        - 价格在所有均线之上：价格在所有均线之上评分
-        - 价格在MA5、MA10、MA20之上：价格在3条均线之上评分
-        - 价格在MA5、MA10之上：价格在2条均线之上评分
-        - 价格在MA5之上：价格在1条均线之上评分
-        - 价格在所有均线之下：价格在所有均线之下评分
-        - 价格在MA5、MA10、MA20之下：价格在3条均线之下评分
-        - 价格在MA5、MA10之下：价格在2条均线之下评分
-        - 其他情况：中性评分
-        """
-        above_count = 0
-        below_count = 0
-        
-        if close_price > ma5:
-            above_count += 1
-        else:
-            below_count += 1
-        
-        if close_price > ma10:
-            above_count += 1
-        else:
-            below_count += 1
-        
-        if close_price > ma20:
-            above_count += 1
-        else:
-            below_count += 1
-        
-        if close_price > ma60:
-            above_count += 1
-        else:
-            below_count += 1
-        
-        # 根据价格位置评分
-        if above_count == 4:
-            return self.config.score_price_all_above  # 价格在所有均线之上
-        elif above_count == 3:
-            return self.config.score_price_3_above  # 价格在3条均线之上
-        elif above_count == 2:
-            return self.config.score_price_2_above  # 价格在2条均线之上
-        elif above_count == 1:
-            return self.config.score_price_1_above  # 价格在1条均线之上
-        elif below_count == 4:
-            return self.config.score_price_all_below  # 价格在所有均线之下
-        elif below_count == 3:
-            return self.config.score_price_3_below  # 价格在3条均线之下
-        elif below_count == 2:
-            return self.config.score_price_2_below  # 价格在2条均线之下
-        else:
-            return self.config.score_price_neutral  # 中性
+    def get_last_regime(self) -> str | None:
+        """获取最近一次 score_universe 推导的行情状态（未开启 regime 时为 None）"""
+        return self._last_regime.value if self._last_regime else None
     
-    def _score_trend_strength(
-        self,
-        close_price: float,
-        ma5: float,
-        ma10: float,
-        ma20: float,
-        ma60: float,
-    ) -> float:
-        """
-        趋势强度评分
+    def _collect_completeness(self, code: str) -> dict:
+        """收集所有子策略的完整度信息，并对数据不完整的情况发出警告"""
+        info = self._combiner.get_completeness_info()
         
-        评分逻辑：
-        - 计算均线之间的距离（发散程度）
-        - 计算价格相对于均线的距离
-        - 综合评估趋势强度
-        """
-        # 计算均线发散程度
-        ma_spread = abs(ma5 - ma20) / ma20 * 100
+        # 检查是否有 incomplete 的策略
+        incomplete_strategies = [
+            name for name, c in info.items()
+            if c.get("completeness") == "insufficient"
+        ]
+        partial_strategies = [
+            name for name, c in info.items()
+            if c.get("completeness") == "partial"
+        ]
         
-        # 计算价格相对于MA5的距离
-        price_spread = abs(close_price - ma5) / ma5 * 100
+        if incomplete_strategies:
+            self.logger.warning(
+                "sub_strategies_with_insufficient_data",
+                code=code,
+                strategies=incomplete_strategies,
+                details={name: info[name] for name in incomplete_strategies},
+            )
         
-        # 计算趋势强度评分
-        # 均线发散程度越大，趋势越强
-        # 价格距离MA5越大，趋势越强
+        if partial_strategies:
+            self.logger.warning(
+                "sub_strategies_with_partial_data",
+                code=code,
+                strategies=partial_strategies,
+                details={name: info[name] for name in partial_strategies},
+            )
         
-        # 基础评分
-        base_score = self.config.score_trend_base
-        
-        # 均线发散加分（最大值从配置读取）
-        ma_spread_score = min(ma_spread * 2, self.config.score_trend_ma_spread_max)
-        
-        # 价格距离加分（最大值从配置读取）
-        price_spread_score = min(price_spread * 1.5, self.config.score_trend_price_spread_max)
-        
-        # 判断趋势方向
-        if close_price > ma5 and ma5 > ma20:
-            # 上涨趋势，加分
-            trend_score = base_score + ma_spread_score + price_spread_score
-        elif close_price < ma5 and ma5 < ma20:
-            # 下跌趋势，减分
-            trend_score = base_score - ma_spread_score - price_spread_score
-        else:
-            # 中性趋势，基础评分
-            trend_score = base_score
-        
-        # 确保评分在0-100之间
-        return max(0.0, min(100.0, trend_score))
+        return info
     
-    def _score_limit_stat(self, stock_data: pd.DataFrame) -> float:
-        """
-        涨跌停次数评分
+    def get_last_completeness(self) -> dict:
+        """获取最近一次评分的子策略数据完整度信息"""
+        return getattr(self, "_last_completeness_info", {})
+    
+    # ==================== 涨跌停惩罚 ====================
+    
+    def _calc_limit_penalty(self, stock_data: pd.DataFrame) -> float:
+        """计算涨跌停惩罚系数（0-1），1表示无惩罚"""
+        if stock_data.empty or self.config.limit_stat_period <= 0:
+            return 1.0
         
-        评分逻辑：
-        - 统计最近limit_stat_period天的涨跌停次数
-        - 涨停次数越多，评分越高
-        - 跌停次数越多，评分越低
+        recent = stock_data.tail(self.config.limit_stat_period)
+        if recent.empty or "pct_chg" not in recent.columns:
+            return 1.0
         
-        返回：评分（0-100）
-        """
-        # 检查数据是否为空
-        if stock_data.empty:
-            return 50.0
+        pct = recent["pct_chg"]
+        limit_up_count = int(sum(pct >= self.config.max_up_threshold))
+        limit_down_count = int(sum(pct <= self.config.max_down_threshold))
         
-        # 获取最近limit_stat_period天的数据
-        recent_df = stock_data.tail(self.config.limit_stat_period)
+        # 跌停惩罚：每跌停一次扣5%，最多扣40%
+        penalty = 1.0 - min(limit_down_count * 0.05, 0.4)
         
-        if recent_df.empty:
-            return 50.0
+        # 涨停过多也可能是异常（连板风险），每涨停超过3次扣3%
+        if limit_up_count > 3:
+            penalty -= min((limit_up_count - 3) * 0.03, 0.15)
         
-        # 计算涨跌幅
-        if "pct_chg" not in recent_df.columns:
-            return 50.0
-        
-        pct_chg = recent_df["pct_chg"]
-        
-        # 统计涨停次数（涨跌幅 >= 最大涨幅阈值）
-        limit_up_count = sum(pct_chg >= self.config.max_up_threshold)
-        
-        # 统计跌停次数（涨跌幅 <= 最大跌幅阈值）
-        limit_down_count = sum(pct_chg <= self.config.max_down_threshold)
-        
-        # 计算评分
-        # 涨停次数越多，评分越高（每个涨停加10分，最多加50分）
-        limit_up_score = min(limit_up_count * 10, 50.0)
-        
-        # 跌停次数越多，评分越低（每个跌停减10分，最多减50分）
-        limit_down_score = max(-limit_down_count * 10, -50.0)
-        
-        # 基础评分50分
-        base_score = 50.0
-        
-        # 总评分
-        total_score = base_score + limit_up_score + limit_down_score
-        
-        # 确保评分在0-100之间
-        return max(0.0, min(100.0, total_score))
+        return max(0.4, penalty)
     
     def filter_stock(self, daily_data: pd.Series, df: pd.DataFrame) -> bool:
         """
-        筛选股票
+        筛选股票（集成风控过滤）
         
         筛选逻辑：
-        1. 市值区间筛选
-        2. 股价区间筛选
-        3. 涨跌停配置筛选
+        1. 股价区间筛选
+        2. 涨跌停配置筛选
+        3. 市值区间筛选
+        4. 风控过滤（涨停当日不可买、ST过滤）
         
         返回：是否通过筛选
         """
-        # 获取股价
         close_price = daily_data.get("close_price", 0)
         
-        # 股价区间筛选
+        # --- 股价区间筛选 ---
         if close_price < self.config.price_min or close_price > self.config.price_max:
-            self.logger.debug(
-                "股价不在区间内",
-                close_price=close_price,
-                price_min=self.config.price_min,
-                price_max=self.config.price_max,
-            )
             return False
         
-        # 涨跌停配置筛选
+        # --- 涨跌停配置筛选 ---
         if self.config.limit_stat_period > 0:
-            # 统计最近N天的涨跌停次数
             recent_df = df.tail(self.config.limit_stat_period)
-            
-            if not recent_df.empty:
-                # 计算涨跌幅
+            if not recent_df.empty and "pct_chg" in recent_df.columns:
                 pct_chg = recent_df["pct_chg"]
+                limit_up_count = int(sum(pct_chg >= self.config.max_up_threshold))
+                limit_down_count = int(sum(pct_chg <= self.config.max_down_threshold))
                 
-                # 统计涨停次数（涨跌幅 >= 最大涨幅阈值）
-                limit_up_count = sum(pct_chg >= self.config.max_up_threshold)
-                
-                # 统计跌停次数（涨跌幅 <= 最大跌幅阈值）
-                limit_down_count = sum(pct_chg <= self.config.max_down_threshold)
-                
-                # 涨停次数筛选
                 if limit_up_count < self.config.limit_up_min:
-                    self.logger.debug(
-                        "涨停次数不足",
-                        limit_up_count=limit_up_count,
-                        limit_up_min=self.config.limit_up_min,
-                    )
                     return False
-                
-                # 跌停次数筛选
                 if limit_down_count > self.config.limit_down_max:
-                    self.logger.debug(
-                        "跌停次数过多",
-                        limit_down_count=limit_down_count,
-                        limit_down_max=self.config.limit_down_max,
-                    )
                     return False
         
-        # 市值区间筛选（需要市值数据）
-        # TODO: 如果数据中有市值字段，进行市值筛选
+        # --- 市值区间筛选 ---
+        market_cap = daily_data.get("total_mv", None)
+        if market_cap is not None and not pd.isna(market_cap):
+            cap_yi = float(market_cap) / 1e8  # 转为亿元
+            if cap_yi < self.config.market_cap_min or cap_yi > self.config.market_cap_max:
+                return False
+        
+        # --- 风控过滤 ---
+        if self.config.enable_risk_control:
+            code = daily_data.get("code", "")
+            pct_chg_val = daily_data.get("pct_chg", None)
+            result = self._risk_control.check_buy(
+                code=str(code),
+                price=close_price,
+                pct_chg=float(pct_chg_val) if pct_chg_val is not None and not pd.isna(pct_chg_val) else None,
+            )
+            if not result.allowed:
+                self.logger.debug(f"风控拦截: {code} - {result.reason}")
+                return False
         
         return True
     
+    def update_market_filter(self, all_data: pd.DataFrame) -> None:
+        """使用全市场数据更新 MarketFilter（涨停/跌停/ST状态）"""
+        self._market_filter.update_market_status(all_data)
+    
+    def update_st_list(self, st_codes: list[str]) -> None:
+        """更新ST股列表"""
+        self._risk_control.update_st_list(st_codes)
+        self._market_filter.set_st_codes(st_codes)
+    
     def get_strategy_info(self) -> dict[str, Any]:
         """获取策略信息"""
+        weights = self._combiner.get_weights_info()
         return {
             "strategy_name": self.strategy_name,
+            "mode": "multi_strategy_combined",
+            "sub_strategies": [s.strategy_name for s in self._combiner.strategies],
+            "sub_weights": weights,
             "config": self.config.to_config_dict(),
         }

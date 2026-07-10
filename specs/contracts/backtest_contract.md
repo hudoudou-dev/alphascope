@@ -1,11 +1,3 @@
-<!--
- * @Author: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @Date: 2026-05-21 16:36:15
- * @LastEditors: error: error: git config user.name & please set dead value or install git && error: git config user.email & please set dead value or install git & please set dead value or install git
- * @LastEditTime: 2026-06-25 15:58:42
- * @FilePath: /alphascope/specs/contracts/backtest_contract.md
- * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
--->
 # Backtest Contract
 
 ## 1. 回测原则
@@ -42,7 +34,8 @@ Transaction = {
     'price': float,  # 交易价格
     'shares': int,  # 交易数量
     'commission': float,  # 交易手续费
-    'amount': float  # 总成交金额
+    'amount': float,  # 总成交金额
+    'reason': str,   # 交易原因
 }
 ```
 
@@ -52,15 +45,23 @@ Transaction = {
 
 必须输出：
 
-- total_return
-- annual_return
-- max_drawdown
-- sharpe_ratio
-- win_rate
+- total_return — 总收益率
+- annual_return — 年化收益率（252 交易日）
+- max_drawdown — 最大回撤
+- sharpe_ratio — 夏普比率
+- win_rate — 胜率
 
 ---
 
-## 5. 回测限制
+## 5. 增强能力
+
+- 交易日历过滤（自动跳过非交易日）
+- 滑点模拟（支持固定/成交量滑点模型）
+- 基准对比
+
+---
+
+## 6. 回测限制
 
 禁止：
 

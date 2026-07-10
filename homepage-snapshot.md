@@ -1,0 +1,86 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e9]: AlphaScope
+    - menubar [ref=e10]:
+      - menuitem "首页" [ref=e11] [cursor=pointer]:
+        - img [ref=e13]
+        - generic [ref=e15]: 首页
+      - menuitem "股票数据更新" [ref=e16] [cursor=pointer]:
+        - img [ref=e18]
+        - generic [ref=e20]: 股票数据更新
+      - menuitem "股票走势概览" [ref=e21] [cursor=pointer]:
+        - img [ref=e23]
+        - generic [ref=e25]: 股票走势概览
+      - menuitem "选股策略配置" [ref=e26] [cursor=pointer]:
+        - img [ref=e28]
+        - generic [ref=e30]: 选股策略配置
+      - menuitem "选股生成结果" [ref=e31] [cursor=pointer]:
+        - img [ref=e33]
+        - generic [ref=e36]: 选股生成结果
+      - menuitem "回测分析展示" [ref=e37] [cursor=pointer]:
+        - img [ref=e39]
+        - generic [ref=e41]: 回测分析展示
+  - generic [ref=e42]:
+    - generic [ref=e43]:
+      - generic [ref=e44]: 首页
+      - generic [ref=e46]: v3.1.0
+    - main [ref=e47]:
+      - generic [ref=e48]:
+        - heading "AlphaScope - A股量化选股与回测平台" [level=1] [ref=e49]
+        - separator [ref=e50]
+        - generic [ref=e51]:
+          - generic [ref=e54]:
+            - generic [ref=e55]: "0"
+            - generic [ref=e56]: 已下载股票数
+          - generic [ref=e59]:
+            - generic [ref=e60]: "0"
+            - generic [ref=e61]: 总数据行数
+          - generic [ref=e64]:
+            - generic [ref=e65]: 0.00 MB
+            - generic [ref=e66]: 总文件大小
+        - heading "核心功能" [level=2] [ref=e67]
+        - generic [ref=e68]:
+          - generic [ref=e71] [cursor=pointer]:
+            - img [ref=e74]
+            - heading "数据管理" [level=3] [ref=e76]
+            - paragraph [ref=e77]: 支持多数据源自动切换、增量更新、K线可视化验真
+          - generic [ref=e80] [cursor=pointer]:
+            - img [ref=e83]
+            - heading "选股策略" [level=3] [ref=e86]
+            - paragraph [ref=e87]: 灵活的超参配置界面、自定义评分权重、Top-N 候选股票
+          - generic [ref=e90] [cursor=pointer]:
+            - img [ref=e93]
+            - heading "回测分析" [level=3] [ref=e95]
+            - paragraph [ref=e96]: 支持真实数据和合成数据、交易记录、资产变化曲线
+        - heading "使用指南" [level=2] [ref=e97]
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - generic [ref=e105]: "1"
+            - generic [ref=e107]: 股票数据更新：下载或更新股票数据
+          - generic [ref=e108]:
+            - generic [ref=e112]: "2"
+            - generic [ref=e114]: 股票走势概览：查看已下载的股票数据和K线图
+          - generic [ref=e115]:
+            - generic [ref=e119]: "3"
+            - generic [ref=e121]: 选股策略配置：配置选股策略的超参
+          - generic [ref=e122]:
+            - generic [ref=e126]: "4"
+            - generic [ref=e128]: 选股生成结果：运行选股策略，查看候选股票
+          - generic [ref=e129]:
+            - generic [ref=e132]: "5"
+            - generic [ref=e134]: 回测分析展示：对候选股票进行回测分析
+        - heading "技术规范" [level=2] [ref=e135]
+        - table [ref=e140]:
+          - rowgroup [ref=e141]:
+            - row "数据契约 统一 Schema，保证数据质量 策略隔离 所有策略继承 BaseStrategy，完全隔离" [ref=e142]:
+              - cell "数据契约" [ref=e143]
+              - cell "统一 Schema，保证数据质量" [ref=e144]
+              - cell "策略隔离" [ref=e145]
+              - cell "所有策略继承 BaseStrategy，完全隔离" [ref=e146]
+            - row "严禁未来函数 回测系统严格禁止未来数据泄露 配置优先 所有可变运行行为必须配置化" [ref=e147]:
+              - cell "严禁未来函数" [ref=e148]
+              - cell "回测系统严格禁止未来数据泄露" [ref=e149]
+              - cell "配置优先" [ref=e150]
+              - cell "所有可变运行行为必须配置化" [ref=e151]

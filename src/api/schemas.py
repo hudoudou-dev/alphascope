@@ -101,9 +101,19 @@ class SelectionConfigResponse(BaseModel):
     min_score_threshold: float
     cooldown_days: int
     max_trades_per_day: int
-    ma_alignment_weight: float
-    price_position_weight: float
-    trend_strength_weight: float
+    # 新5因子权重
+    trend_weight: float = 30.0
+    momentum_weight: float = 25.0
+    volume_weight: float = 20.0
+    volatility_weight: float = 15.0
+    fundamental_weight: float = 10.0
+    # 风控开关
+    enable_risk_control: bool = True
+    enable_st_filter: bool = True
+    enable_limit_filter: bool = True
+    # 横截面标准化 / 行情自适应开关
+    cross_sectional_enabled: bool = False
+    regime_enabled: bool = False
 
 
 class SelectionConfigUpdate(BaseModel):
@@ -122,9 +132,18 @@ class SelectionConfigUpdate(BaseModel):
     min_score_threshold: float | None = None
     cooldown_days: int | None = None
     max_trades_per_day: int | None = None
-    ma_alignment_weight: float | None = None
-    price_position_weight: float | None = None
-    trend_strength_weight: float | None = None
+    # 新5因子权重
+    trend_weight: float | None = None
+    momentum_weight: float | None = None
+    volume_weight: float | None = None
+    volatility_weight: float | None = None
+    fundamental_weight: float | None = None
+    # 风控开关
+    enable_risk_control: bool | None = None
+    enable_st_filter: bool | None = None
+    enable_limit_filter: bool | None = None
+    cross_sectional_enabled: bool | None = None
+    regime_enabled: bool | None = None
 
 
 class ConfigUpdateResponse(BaseModel):
@@ -141,6 +160,16 @@ class SelectionResultItem(BaseModel):
     close_price: float
     pct_chg: float
     tradable: bool
+    # 因子明细
+    trend_detail: str = ""
+    momentum_detail: str = ""
+    volume_detail: str = ""
+    vol_detail: str = ""
+    fund_detail: str = ""
+    # 子策略分项得分（多策略组合模式）
+    sub_scores: dict[str, float] = Field(default_factory=dict, description="各子策略分项得分")
+    # 数据完整度信息
+    completeness: dict[str, dict] = Field(default_factory=dict, description="子策略数据完整度: {策略名: {completeness, missing_factors}}")
 
 
 class SelectionRunResponse(BaseModel):

@@ -2,7 +2,7 @@
 
 ## Python Version
 
-Python 3.10+
+Python 3.12+
 
 ---
 
@@ -41,3 +41,4 @@ Python 3.10+
 - mutable global state
 - hardcoded config
 - silent exception
+- future leakage

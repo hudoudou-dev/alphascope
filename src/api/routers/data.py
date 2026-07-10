@@ -87,8 +87,12 @@ async def list_stocks():
             start_date = str(df["date"].min()) if "date" in df.columns and not df.empty else None
             end_date = str(df["date"].max()) if "date" in df.columns and not df.empty else None
 
+            # 从文件名中提取纯代码: "300502.SZ.新易盛" → "300502.SZ"
+            file_parts = file.stem.split(".")
+            pure_code = f"{file_parts[0]}.{file_parts[1]}" if len(file_parts) >= 2 else file.stem
+
             stocks.append(StockInfo(
-                code=file.stem,
+                code=pure_code,
                 name=stock_name,
                 rows=rows,
                 start_date=start_date,
@@ -157,8 +161,12 @@ async def get_stock_detail(
 
         latest_close = float(df.iloc[-1]["close_price"]) if not df.empty else None
 
+        # 从文件名中提取纯代码: "300502.SZ.新易盛" → "300502.SZ"
+        detail_parts = file_path.stem.split(".")
+        detail_code = f"{detail_parts[0]}.{detail_parts[1]}" if len(detail_parts) >= 2 else file_path.stem
+
         result = StockDetailResponse(
-            code=file_path.stem,
+            code=detail_code,
             name=stock_name,
             rows=len(df),
             start_date=str(df["date"].min().date()) if not df.empty else None,

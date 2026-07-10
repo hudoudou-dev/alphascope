@@ -33,9 +33,18 @@ _CONFIG_KEY_MAP = {
     "min_score_threshold": "strategy.selection.min_score_threshold",
     "cooldown_days": "strategy.selection.cooldown_days",
     "max_trades_per_day": "strategy.selection.max_trades_per_day",
-    "ma_alignment_weight": "strategy.selection.ma_alignment_weight",
-    "price_position_weight": "strategy.selection.price_position_weight",
-    "trend_strength_weight": "strategy.selection.trend_strength_weight",
+    # 新5因子权重
+    "trend_weight": "strategy.selection.trend_weight",
+    "momentum_weight": "strategy.selection.momentum_weight",
+    "volume_weight": "strategy.selection.volume_weight",
+    "volatility_weight": "strategy.selection.volatility_weight",
+    "fundamental_weight": "strategy.selection.fundamental_weight",
+    # 风控开关
+    "enable_risk_control": "strategy.selection.enable_risk_control",
+    "enable_st_filter": "strategy.selection.enable_st_filter",
+    "enable_limit_filter": "strategy.selection.enable_limit_filter",
+    "cross_sectional_enabled": "strategy.selection.cross_sectional_enabled",
+    "regime_enabled": "strategy.selection.regime_enabled",
 }
 
 
