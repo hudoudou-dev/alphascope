@@ -20,12 +20,11 @@ const form = ref({
   max_positions: 10,
   top_n: 20,
   min_score_threshold: 70.0,
-  // 5因子权重
-  trend_weight: 30,
+  // 4子策略融合权重
+  trend_weight: 35,
   momentum_weight: 25,
-  volume_weight: 20,
-  volatility_weight: 15,
-  fundamental_weight: 10,
+  volume_price_weight: 25,
+  quality_weight: 15,
   // 风控开关
   enable_risk_control: true,
   enable_st_filter: true,
@@ -36,8 +35,7 @@ const form = ref({
 })
 
 const weightTotal = computed(() =>
-  form.value.trend_weight + form.value.momentum_weight + form.value.volume_weight +
-  form.value.volatility_weight + form.value.fundamental_weight
+  form.value.trend_weight + form.value.momentum_weight + form.value.volume_price_weight + form.value.quality_weight
 )
 
 onMounted(async () => {
@@ -165,37 +163,34 @@ const reset = async () => {
       </el-col>
     </el-row>
 
-    <!-- 5因子评分权重 -->
-    <h2 class="section-title">评分权重配置（5因子）</h2>
+    <!-- 4子策略融合权重 -->
+    <h2 class="section-title">子策略融合权重（4子策略）</h2>
+    <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+      以下权重控制4套子策略在综合评分中的占比。权重会被自动归一化（即使总和不为100%），无需精确调整。
+    </el-alert>
     <el-row :gutter="16">
-      <el-col :span="4">
-        <el-form-item label="趋势(%)">
+      <el-col :span="5">
+        <el-form-item label="趋势策略(%)">
           <el-slider v-model="form.trend_weight" :min="0" :max="100" show-input style="width: 100%" />
-          <div class="factor-hint">MA排列 + MACD</div>
+          <div class="factor-hint">ADX + MA排列 + MACD + 回调买点</div>
         </el-form-item>
       </el-col>
-      <el-col :span="4">
-        <el-form-item label="动量(%)">
+      <el-col :span="5">
+        <el-form-item label="动量策略(%)">
           <el-slider v-model="form.momentum_weight" :min="0" :max="100" show-input style="width: 100%" />
-          <div class="factor-hint">RSI + 涨跌幅</div>
+          <div class="factor-hint">短期反转 + 多周期动量 + RSI</div>
         </el-form-item>
       </el-col>
-      <el-col :span="4">
-        <el-form-item label="成交量(%)">
-          <el-slider v-model="form.volume_weight" :min="0" :max="100" show-input style="width: 100%" />
-          <div class="factor-hint">量比</div>
+      <el-col :span="5">
+        <el-form-item label="量价策略(%)">
+          <el-slider v-model="form.volume_price_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">量比 + 换手率 + 量价相关 + OBV</div>
         </el-form-item>
       </el-col>
-      <el-col :span="4">
-        <el-form-item label="波动率(%)">
-          <el-slider v-model="form.volatility_weight" :min="0" :max="100" show-input style="width: 100%" />
-          <div class="factor-hint">布林带位置</div>
-        </el-form-item>
-      </el-col>
-      <el-col :span="4">
-        <el-form-item label="基本面(%)">
-          <el-slider v-model="form.fundamental_weight" :min="0" :max="100" show-input style="width: 100%" />
-          <div class="factor-hint">PE/PB/ROE</div>
+      <el-col :span="5">
+        <el-form-item label="质量策略(%)">
+          <el-slider v-model="form.quality_weight" :min="0" :max="100" show-input style="width: 100%" />
+          <div class="factor-hint">波动率 + 偏度 + 基本面</div>
         </el-form-item>
       </el-col>
       <el-col :span="4">
@@ -205,7 +200,7 @@ const reset = async () => {
           style="height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; min-height: 80px"
         >
           <div style="font-size: 20px; font-weight: bold">{{ weightTotal }}%</div>
-          <div style="font-size: 12px">{{ weightTotal === 100 ? '✓ 已平衡' : '⚠ 建议100%' }}</div>
+          <div style="font-size: 12px">{{ weightTotal === 100 ? '✓ 已平衡' : '⚠ 自动归一化' }}</div>
         </el-alert>
       </el-col>
     </el-row>

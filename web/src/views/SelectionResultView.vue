@@ -105,12 +105,23 @@ const runSelection = async () => {
             <span style="margin-left: 8px">{{ row.score }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="因子明细" min-width="260">
-          <el-table-column prop="trend_detail" label="趋势" width="80" />
-          <el-table-column prop="momentum_detail" label="动量" width="80" />
-          <el-table-column prop="volume_detail" label="量价" width="80" />
-          <el-table-column prop="vol_detail" label="波动" width="80" />
-          <el-table-column prop="fund_detail" label="基本面" width="80" />
+        <el-table-column label="子策略分项得分" min-width="340">
+          <template #default="{ row }">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+              <el-tag size="small" type="primary" effect="plain">
+                趋势 {{ row.sub_scores?.TrendStrategy ?? '-' }}
+              </el-tag>
+              <el-tag size="small" type="success" effect="plain">
+                动量 {{ row.sub_scores?.MomentumStrategy ?? '-' }}
+              </el-tag>
+              <el-tag size="small" type="warning" effect="plain">
+                量价 {{ row.sub_scores?.VolumePriceStrategy ?? '-' }}
+              </el-tag>
+              <el-tag size="small" type="info" effect="plain">
+                质量 {{ row.sub_scores?.QualityStrategy ?? '-' }}
+              </el-tag>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column prop="close_price" label="股价（元）" width="100" />
         <el-table-column prop="pct_chg" label="涨跌幅" width="100">

@@ -153,6 +153,8 @@ class TrendStrategy(BaseStrategy):
 
         # 回调买点评分
         self._pullback_no_pullback = c.get("pullback_no_pullback", 50.0)
+        self._pullback_no_pullback_bull = c.get("pullback_no_pullback_bull", 65.0)
+        self._pullback_no_pullback_bear = c.get("pullback_no_pullback_bear", 45.0)
         self._pullback_ma_perfect = c.get("pullback_ma_perfect", 82.0)
         self._pullback_long_bull = c.get("pullback_long_bull", 75.0)
         self._pullback_mid_bull = c.get("pullback_mid_bull", 62.0)
@@ -269,7 +271,14 @@ class TrendStrategy(BaseStrategy):
             return self._pullback_no_pullback, True
 
         if close >= ma5:
-            return self._pullback_no_pullback, False
+            # P1-S4: 不回调节场景区分
+            ma_bullish = ma5 > ma10 > ma20 > ma60 > 0
+            ma_bearish = close < ma5 < ma10 < ma20 < ma60
+            if ma_bullish:
+                return self._pullback_no_pullback_bull, False   # 强势拉升，无需回调
+            elif ma_bearish:
+                return self._pullback_no_pullback_bear, False   # 下跌中反弹，有风险
+            return self._pullback_no_pullback, False            # 中性
 
         ma_bullish = ma5 > ma10 > ma20 > ma60 > 0
 
@@ -303,9 +312,9 @@ class MomentumStrategy(BaseStrategy):
     def _load_config(self):
         c = _get_cfg("momentum", {})
 
-        # 子因子权重
-        self._w_short_rev = c.get("short_reversal_weight", 0.35)
-        self._w_multi_mom = c.get("multi_momentum_weight", 0.35)
+        # 子因子权重（短期反转已降低权重，多周期动量提升）
+        self._w_short_rev = c.get("short_reversal_weight", 0.20)
+        self._w_multi_mom = c.get("multi_momentum_weight", 0.50)
         self._w_rsi = c.get("rsi_weight", 0.30)
 
         # 多周期动量内层权重
@@ -334,32 +343,32 @@ class MomentumStrategy(BaseStrategy):
         self._sr_b_overbought = c.get("short_rev_overbought_bound", 10)
         self._sr_b_hot = c.get("short_rev_hot_bound", 20)
 
-        # 10日动量
-        self._m10_strong_up = c.get("mom10_strong_up", 55.0)
-        self._m10_moderate_up = c.get("mom10_moderate_up", 65.0)
-        self._m10_slight_up = c.get("mom10_slight_up", 58.0)
-        self._m10_slight_down = c.get("mom10_slight_down", 48.0)
-        self._m10_down = c.get("mom10_down", 35.0)
+        # 10日动量（单调递增：涨幅越大分越高）
+        self._m10_extreme_up = c.get("mom10_extreme_up", 82.0)
+        self._m10_strong_up = c.get("mom10_strong_up", 70.0)
+        self._m10_moderate_up = c.get("mom10_moderate_up", 58.0)
+        self._m10_slight_down = c.get("mom10_slight_down", 45.0)
+        self._m10_down = c.get("mom10_down", 30.0)
         self._m10_t = c.get("mom10_thresholds", [15, 5, 0, -5])
 
-        # 20日动量
-        self._m20_extreme_up = c.get("mom20_extreme_up", 50.0)
-        self._m20_strong_up = c.get("mom20_strong_up", 62.0)
-        self._m20_moderate_up = c.get("mom20_moderate_up", 68.0)
-        self._m20_slight_up = c.get("mom20_slight_up", 60.0)
-        self._m20_slight_down = c.get("mom20_slight_down", 45.0)
-        self._m20_down = c.get("mom20_down", 30.0)
+        # 20日动量（单调递增：涨幅越大分越高）
+        self._m20_extreme_up = c.get("mom20_extreme_up", 85.0)
+        self._m20_strong_up = c.get("mom20_strong_up", 72.0)
+        self._m20_moderate_up = c.get("mom20_moderate_up", 62.0)
+        self._m20_slight_up = c.get("mom20_slight_up", 55.0)
+        self._m20_slight_down = c.get("mom20_slight_down", 42.0)
+        self._m20_down = c.get("mom20_down", 25.0)
         self._m20_t = c.get("mom20_thresholds", [30, 15, 5, 0, -10])
 
-        # 60日动量
-        self._m60_extreme_up = c.get("mom60_extreme_up", 60.0)
-        self._m60_strong_up = c.get("mom60_strong_up", 68.0)
-        self._m60_moderate_up = c.get("mom60_moderate_up", 60.0)
+        # 60日动量（单调递增：涨幅越大分越高）
+        self._m60_extreme_up = c.get("mom60_extreme_up", 88.0)
+        self._m60_strong_up = c.get("mom60_strong_up", 75.0)
+        self._m60_moderate_up = c.get("mom60_moderate_up", 62.0)
         self._m60_slight_down = c.get("mom60_slight_down", 42.0)
         self._m60_down = c.get("mom60_down", 28.0)
         self._m60_t = c.get("mom60_thresholds", [30, 10, 0, -15])
 
-        # RSI 评分
+        # RSI 评分（P1-S3: 放宽超买惩罚，增加趋势判断）
         self._rsi_oversold_bouncing = c.get("rsi_oversold_bouncing", 75.0)
         self._rsi_oversold_falling = c.get("rsi_oversold_falling", 52.0)
         self._rsi_low = c.get("rsi_low", 65.0)
@@ -367,7 +376,8 @@ class MomentumStrategy(BaseStrategy):
         self._rsi_neutral = c.get("rsi_neutral", 50.0)
         self._rsi_mid_high = c.get("rsi_mid_high", 45.0)
         self._rsi_high = c.get("rsi_high", 35.0)
-        self._rsi_overbought = c.get("rsi_overbought", 25.0)
+        self._rsi_overbought = c.get("rsi_overbought", 35.0)
+        self._rsi_overbought_rising = c.get("rsi_overbought_rising", 50.0)
         self._rsi_t = c.get("rsi_thresholds", [25, 35, 45, 55, 65, 75])
 
     def build_factor_scores(
@@ -392,34 +402,61 @@ class MomentumStrategy(BaseStrategy):
         return factor_scores, weights
 
     def _score_short_reversal(self, stock_data: pd.DataFrame) -> tuple[float, bool]:
+        """短期反转因子：5日涨跌幅评分，结合中期趋势调整极端值"""
         if len(stock_data) < 6:
             return 50.0, True
 
-        ret_5d = stock_data["pct_chg"].tail(5).sum() if "pct_chg" in stock_data.columns else 0
+        pct_col = "pct_chg" if "pct_chg" in stock_data.columns else "close_price"
+        if pct_col == "close_price":
+            ret_5d = (stock_data["close_price"].iloc[-1] - stock_data["close_price"].iloc[-6]) / stock_data["close_price"].iloc[-6] * 100
+        else:
+            ret_5d = stock_data["pct_chg"].tail(5).sum()
         if pd.isna(ret_5d):
             return 50.0, True
 
+        # 中期趋势背景：判断是否处于上升趋势中
+        latest = stock_data.iloc[-1]
+        ma60 = latest.get("ma60", 0)
+        close = latest.get("close_price", 0)
+        mid_bull = (close > ma60 > 0) if ma60 > 0 else False
+
+        # 趋势调整系数：牛市中放宽对短期超买的惩罚，弱市中保留原始反转逻辑
+        base_score = self._sr_extreme_hot
         if ret_5d < self._sr_b_severe:
-            return self._sr_severe_oversold, False
+            base_score = self._sr_severe_oversold
+            if mid_bull:
+                base_score = 65.0   # 牛市中超跌 → 回调买点，但不过度给分
         elif ret_5d < self._sr_b_oversold:
-            return self._sr_oversold, False
+            base_score = self._sr_oversold
+            if mid_bull:
+                base_score = 60.0
         elif ret_5d < self._sr_b_clear:
-            return self._sr_clear_oversold, False
+            base_score = self._sr_clear_oversold
+            if mid_bull:
+                base_score = 56.0
         elif ret_5d < self._sr_b_mild:
-            return self._sr_mild_oversold, False
+            base_score = self._sr_mild_oversold
         elif ret_5d < self._sr_b_neutral:
-            return self._sr_slight_fall, False
+            base_score = self._sr_slight_fall
         elif ret_5d < self._sr_b_slight_rise:
-            return self._sr_slight_rise, False
+            base_score = self._sr_slight_rise
         elif ret_5d < self._sr_b_overbought:
-            return self._sr_overbought, False
+            base_score = self._sr_overbought
+            if mid_bull:
+                base_score = 48.0   # 牛市中温和超买 → 接近中性
         elif ret_5d < self._sr_b_hot:
-            return self._sr_hot, False
+            base_score = self._sr_hot
+            if mid_bull:
+                base_score = 42.0   # 牛市中热度偏高 → 中性偏低但不惩罚
         else:
-            return self._sr_extreme_hot, False
+            # ret_5d >= 20%：极度过热
+            if mid_bull:
+                base_score = 38.0   # 牛市中强涨 → 降低惩罚（原22分）
+
+        return base_score, False
 
     def _score_multi_momentum(self, stock_data: pd.DataFrame) -> tuple[float, bool]:
-        """多周期动量评分，内部子周期缺失时权重自动再分配"""
+        """多周期动量评分（单调递增），内部子周期缺失时权重自动再分配"""
         close = stock_data["close_price"]
         n = len(stock_data)
         latest_close = close.iloc[-1]
@@ -427,53 +464,53 @@ class MomentumStrategy(BaseStrategy):
         sub_scores: dict[str, float] = {}
         sub_missing: list[str] = []
 
-        # 10日动量
+        # 10日动量（单调递增：涨越多分越高）
         if n >= 10:
             ret_10d = (latest_close - close.iloc[-10]) / close.iloc[-10] * 100
             if ret_10d > self._m10_t[0]:
-                sub_scores["mom10"] = self._m10_strong_up
+                sub_scores["mom10"] = self._m10_extreme_up      # ret>15% → 强动量
             elif ret_10d > self._m10_t[1]:
-                sub_scores["mom10"] = self._m10_moderate_up
+                sub_scores["mom10"] = self._m10_strong_up       # 5%-15%
             elif ret_10d > self._m10_t[2]:
-                sub_scores["mom10"] = self._m10_slight_up
+                sub_scores["mom10"] = self._m10_moderate_up     # 0%-5%
             elif ret_10d > self._m10_t[3]:
-                sub_scores["mom10"] = self._m10_slight_down
+                sub_scores["mom10"] = self._m10_slight_down     # -5%-0%
             else:
-                sub_scores["mom10"] = self._m10_down
+                sub_scores["mom10"] = self._m10_down            # <-5%
         else:
             sub_missing.append("mom10")
 
-        # 20日动量
+        # 20日动量（单调递增：涨越多分越高）
         if n >= 20:
             ret_20d = (latest_close - close.iloc[-20]) / close.iloc[-20] * 100
             if ret_20d > self._m20_t[0]:
-                sub_scores["mom20"] = self._m20_extreme_up
+                sub_scores["mom20"] = self._m20_extreme_up      # ret>30% → 超强动量
             elif ret_20d > self._m20_t[1]:
-                sub_scores["mom20"] = self._m20_strong_up
+                sub_scores["mom20"] = self._m20_strong_up       # 15%-30%
             elif ret_20d > self._m20_t[2]:
-                sub_scores["mom20"] = self._m20_moderate_up
+                sub_scores["mom20"] = self._m20_moderate_up     # 5%-15%
             elif ret_20d > self._m20_t[3]:
-                sub_scores["mom20"] = self._m20_slight_up
+                sub_scores["mom20"] = self._m20_slight_up       # 0%-5%
             elif ret_20d > self._m20_t[4]:
-                sub_scores["mom20"] = self._m20_slight_down
+                sub_scores["mom20"] = self._m20_slight_down     # -10%-0%
             else:
-                sub_scores["mom20"] = self._m20_down
+                sub_scores["mom20"] = self._m20_down            # <-10%
         else:
             sub_missing.append("mom20")
 
-        # 60日动量
+        # 60日动量（单调递增：涨越多分越高）
         if n >= 60:
             ret_60d = (latest_close - close.iloc[-60]) / close.iloc[-60] * 100
             if ret_60d > self._m60_t[0]:
-                sub_scores["mom60"] = self._m60_extreme_up
+                sub_scores["mom60"] = self._m60_extreme_up      # ret>30% → 长期强牛
             elif ret_60d > self._m60_t[1]:
-                sub_scores["mom60"] = self._m60_strong_up
+                sub_scores["mom60"] = self._m60_strong_up       # 10%-30%
             elif ret_60d > self._m60_t[2]:
-                sub_scores["mom60"] = self._m60_moderate_up
+                sub_scores["mom60"] = self._m60_moderate_up     # 0%-10%
             elif ret_60d > self._m60_t[3]:
-                sub_scores["mom60"] = self._m60_slight_down
+                sub_scores["mom60"] = self._m60_slight_down     # -15%-0%
             else:
-                sub_scores["mom60"] = self._m60_down
+                sub_scores["mom60"] = self._m60_down            # <-15%
         else:
             sub_missing.append("mom60")
 
@@ -490,6 +527,7 @@ class MomentumStrategy(BaseStrategy):
         return score, bool(sub_missing)
 
     def _score_rsi(self, latest: pd.Series, stock_data: pd.DataFrame) -> tuple[float, bool]:
+        """RSI评分：高位上升→动量加速(中性)，高位下降→动量衰竭(惩罚)"""
         rsi = latest.get("rsi", np.nan)
         if pd.isna(rsi):
             return 50.0, True
@@ -513,7 +551,8 @@ class MomentumStrategy(BaseStrategy):
         elif rsi < self._rsi_t[5]:
             result = self._rsi_high
         else:
-            result = self._rsi_overbought
+            # RSI ≥ 75: 高位仍在上升→动量加速(中性)；高位拐头→动量衰竭(惩罚)
+            result = self._rsi_overbought_rising if rsi_rising else self._rsi_overbought
         return result, False
 
 
@@ -572,9 +611,11 @@ class VolumePriceStrategy(BaseStrategy):
         self._vp_pos_bound = c.get("vp_corr_positive_bound", 0.5)
         self._vp_neg_bound = c.get("vp_corr_negative_bound", -0.3)
 
-        # OBV 评分
-        self._obv_above = c.get("obv_above_ma", 65.0)
-        self._obv_below = c.get("obv_below_ma", 40.0)
+        # OBV 评分（P2-S6: 多级区分度，基于OBV斜率）
+        self._obv_strong_up = c.get("obv_strong_up", 80.0)
+        self._obv_up = c.get("obv_up", 60.0)
+        self._obv_flat = c.get("obv_flat", 50.0)
+        self._obv_down = c.get("obv_down", 35.0)
 
         # 缩量止跌评分
         self._ss_strong = c.get("shrink_stop_strong", 72.0)
@@ -599,7 +640,7 @@ class VolumePriceStrategy(BaseStrategy):
         vol_score, vol_missing = self._score_vol_ratio(latest)
         turn_score, turn_missing = self._score_turnover(latest)
         vp_corr_score, vp_missing = self._score_vp_corr(latest, stock_data)
-        obv_score, obv_missing = self._score_obv(latest)
+        obv_score, obv_missing = self._score_obv(latest, stock_data)
         shrink_score, shrink_missing = self._score_shrink_stop(stock_data)
 
         factor_scores = {
@@ -638,6 +679,11 @@ class VolumePriceStrategy(BaseStrategy):
 
     def _score_turnover(self, latest: pd.Series) -> tuple[float, bool]:
         turn = latest.get("turn", np.nan)
+        # 强制转为 float：部分原始数据（如 akShare）的 turn 列可能为字符串类型
+        try:
+            turn = float(turn)
+        except (ValueError, TypeError):
+            turn = np.nan
         if pd.isna(turn) or turn <= 0:
             return 50.0, True
 
@@ -668,12 +714,37 @@ class VolumePriceStrategy(BaseStrategy):
         else:
             return self._vp_neutral, False
 
-    def _score_obv(self, latest: pd.Series) -> tuple[float, bool]:
+    def _score_obv(self, latest: pd.Series, stock_data: pd.DataFrame | None = None) -> tuple[float, bool]:
+        """OBV评分：基于OBV斜率的多级判断（P2-S6增强区分度）"""
         obv = latest.get("obv", np.nan)
         obv_ma5 = latest.get("obv_ma5", np.nan)
         if pd.isna(obv) or pd.isna(obv_ma5):
             return 50.0, True
-        return (self._obv_above if obv > obv_ma5 else self._obv_below), False
+
+        if stock_data is not None and len(stock_data) >= 5 and "obv" in stock_data.columns:
+            obv_series = stock_data["obv"].tail(5).dropna()
+            if len(obv_series) >= 3:
+                # 计算近期OBV斜率（线性回归）
+                x = np.arange(len(obv_series))
+                slope = np.polyfit(x, obv_series.values, 1)[0]
+                # 归一化斜率：除以OBV均值，使不同股价的股票可比
+                obv_mean = obv_series.mean()
+                if obv_mean > 0:
+                    norm_slope = slope / obv_mean * 100
+                else:
+                    norm_slope = 0
+                # 多级判断
+                if norm_slope > 1.0:
+                    return self._obv_strong_up, False    # OBV加速上升
+                elif norm_slope > 0.2:
+                    return self._obv_up, False           # OBV上升但减速
+                elif norm_slope > -0.2:
+                    return self._obv_flat, False         # OBV横盘
+                else:
+                    return self._obv_down, False         # OBV下降
+
+        # 回退：单日二元判断
+        return (self._obv_up if obv > obv_ma5 else self._obv_down), False
 
     def _score_shrink_stop(self, stock_data: pd.DataFrame) -> tuple[float, bool]:
         if len(stock_data) < 10:
@@ -755,7 +826,7 @@ class QualityStrategy(BaseStrategy):
     ) -> tuple[dict[str, tuple[float, bool]], dict[str, float]]:
         latest = stock_data.iloc[-1]
 
-        vol_score, vol_missing = self._score_volatility(latest)
+        vol_score, vol_missing = self._score_volatility(latest, stock_data)
         skew_score, skew_missing = self._score_skewness(latest)
         down_score, down_missing = self._score_downside(latest)
         fund_score, fund_missing = self._score_fundamental(latest)
@@ -774,21 +845,40 @@ class QualityStrategy(BaseStrategy):
         }
         return factor_scores, weights
 
-    def _score_volatility(self, latest: pd.Series) -> tuple[float, bool]:
+    def _score_volatility(self, latest: pd.Series, stock_data: pd.DataFrame | None = None) -> tuple[float, bool]:
+        """波动率评分：区分上行/下行波动，上涨波动不惩罚"""
         hist_vol = latest.get("hist_vol", np.nan)
         if pd.isna(hist_vol):
             return 50.0, True
 
+        # 基础分：按历史波动率分档
         if hist_vol < self._vol_t[0]:
-            return self._vol_extreme_low, False
+            base = self._vol_extreme_low
         elif hist_vol < self._vol_t[1]:
-            return self._vol_low, False
+            base = self._vol_low
         elif hist_vol < self._vol_t[2]:
-            return self._vol_medium, False
+            base = self._vol_medium
         elif hist_vol < self._vol_t[3]:
-            return self._vol_high, False
+            base = self._vol_high
         else:
-            return self._vol_extreme_high, False
+            base = self._vol_extreme_high
+
+        # P1-S5: 方向性调整 — 上行波动为主导的股票不应被惩罚
+        if stock_data is not None and len(stock_data) >= 10 and "pct_chg" in stock_data.columns:
+            recent = stock_data.tail(20)
+            ret = recent["pct_chg"]
+            up_ret = ret.where(ret > 0, 0)
+            down_ret = ret.where(ret < 0, 0)
+            up_std = up_ret[up_ret > 0].std() if (up_ret > 0).sum() >= 3 else 0
+            down_std = abs(down_ret[down_ret < 0].std()) if (down_ret < 0).sum() >= 3 else 0
+            if down_std > 0 and up_std > 0:
+                ratio = up_std / down_std
+                if ratio > 1.5:
+                    base = min(100, base + 10)      # 上行波动主导 → 加分
+                elif ratio < 0.67:
+                    base = max(10, base - 5)         # 下行波动主导 → 减分
+
+        return base, False
 
     def _score_skewness(self, latest: pd.Series) -> tuple[float, bool]:
         skew = latest.get("ret_skew", np.nan)

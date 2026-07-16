@@ -33,12 +33,11 @@ _CONFIG_KEY_MAP = {
     "min_score_threshold": "strategy.selection.min_score_threshold",
     "cooldown_days": "strategy.selection.cooldown_days",
     "max_trades_per_day": "strategy.selection.max_trades_per_day",
-    # 新5因子权重
+    # 4子策略融合权重
     "trend_weight": "strategy.selection.trend_weight",
     "momentum_weight": "strategy.selection.momentum_weight",
-    "volume_weight": "strategy.selection.volume_weight",
-    "volatility_weight": "strategy.selection.volatility_weight",
-    "fundamental_weight": "strategy.selection.fundamental_weight",
+    "volume_price_weight": "strategy.selection.volume_price_weight",
+    "quality_weight": "strategy.selection.quality_weight",
     # 风控开关
     "enable_risk_control": "strategy.selection.enable_risk_control",
     "enable_st_filter": "strategy.selection.enable_st_filter",

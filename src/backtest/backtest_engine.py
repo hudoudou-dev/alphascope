@@ -45,6 +45,7 @@ class TradingCalendarFilter:
 class Transaction:
     date: datetime
     code: str
+    name: str
     action: Literal["BUY", "SELL"]
     price: float
     shares: int
@@ -58,6 +59,7 @@ class Transaction:
         return {
             "date": self.date,
             "code": self.code,
+            "name": self.name,
             "action": self.action,
             "price": self.price,
             "shares": self.shares,
@@ -243,15 +245,15 @@ class BacktestEngine:
         # 传入全量股票数据，而不是只传入当天的数据
         result = self.strategy.execute(df, ctx, date)
         
-        for code in result["sell_signals"]:
-            self._execute_sell(code, date_df, date)
+        for code, sell_reason in result["sell_signals"]:
+            self._execute_sell(code, date_df, date, sell_reason)
         
-        for code in result["buy_signals"]:
-            self._execute_buy(code, date_df, date)
+        for code, score in result["buy_signals"]:
+            self._execute_buy(code, date_df, date, score)
         
         self._record_portfolio_state(date, date_df)
     
-    def _execute_sell(self, code: str, date_df: pd.DataFrame, date: datetime) -> None:
+    def _execute_sell(self, code: str, date_df: pd.DataFrame, date: datetime, sell_reason: str = "") -> None:
         if code not in self.positions:
             return
         
@@ -291,28 +293,30 @@ class BacktestEngine:
         
         total_value = self.capital + positions_value
         
+        name = str(stock_data.iloc[0].get("name", code))
         transaction = Transaction(
             date=date,
             code=code,
+            name=name,
             action="SELL",
             price=sell_price,
             shares=int(shares),
             commission=total_cost,
             amount=amount,
-            reason="Strategy signal",
+            reason=sell_reason or "Strategy signal",
             total_value=total_value,
             profit=profit,
         )
         self.transactions.append(transaction)
         
-        # 记录卖出日期（用于冷却期）
-        self.strategy._last_sell_dates[code] = date
+        # 记录卖出日期和原因（用于冷却期区分）
+        self.strategy._last_sell_dates[code] = (date, sell_reason)
         
-        # 更新交易次数（用于交易频率限制）
+        # 更新卖出次数（买卖分开限制）
         date_str = date.strftime("%Y-%m-%d")
-        if date_str not in self.strategy._daily_trade_counts:
-            self.strategy._daily_trade_counts[date_str] = 0
-        self.strategy._daily_trade_counts[date_str] += 1
+        if date_str not in self.strategy._daily_sell_counts:
+            self.strategy._daily_sell_counts[date_str] = 0
+        self.strategy._daily_sell_counts[date_str] += 1
         
         del self.positions[code]
         
@@ -328,7 +332,7 @@ class BacktestEngine:
             total_value=total_value,
         )
     
-    def _execute_buy(self, code: str, date_df: pd.DataFrame, date: datetime) -> None:
+    def _execute_buy(self, code: str, date_df: pd.DataFrame, date: datetime, buy_score: float = 50.0) -> None:
         if code in self.positions:
             return
         
@@ -366,6 +370,8 @@ class BacktestEngine:
             current_price=price,
             buy_date=date,
             holding_days=0,
+            buy_score=buy_score,
+            highest_price=price,
         )
         self.positions[code] = position
         
@@ -379,9 +385,11 @@ class BacktestEngine:
         
         total_value = self.capital + positions_value
         
+        name = str(stock_data.iloc[0].get("name", code))
         transaction = Transaction(
             date=date,
             code=code,
+            name=name,
             action="BUY",
             price=buy_price,
             shares=max_shares,
@@ -393,11 +401,11 @@ class BacktestEngine:
         )
         self.transactions.append(transaction)
         
-        # 更新交易次数（用于交易频率限制）
+        # 更新买入次数（买卖分开限制）
         date_str = date.strftime("%Y-%m-%d")
-        if date_str not in self.strategy._daily_trade_counts:
-            self.strategy._daily_trade_counts[date_str] = 0
-        self.strategy._daily_trade_counts[date_str] += 1
+        if date_str not in self.strategy._daily_buy_counts:
+            self.strategy._daily_buy_counts[date_str] = 0
+        self.strategy._daily_buy_counts[date_str] += 1
         
         self.logger.info(
             "Executed buy",

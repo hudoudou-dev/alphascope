@@ -101,12 +101,11 @@ class SelectionConfigResponse(BaseModel):
     min_score_threshold: float
     cooldown_days: int
     max_trades_per_day: int
-    # 新5因子权重
-    trend_weight: float = 30.0
+    # 4子策略融合权重
+    trend_weight: float = 35.0
     momentum_weight: float = 25.0
-    volume_weight: float = 20.0
-    volatility_weight: float = 15.0
-    fundamental_weight: float = 10.0
+    volume_price_weight: float = 25.0
+    quality_weight: float = 15.0
     # 风控开关
     enable_risk_control: bool = True
     enable_st_filter: bool = True
@@ -132,12 +131,11 @@ class SelectionConfigUpdate(BaseModel):
     min_score_threshold: float | None = None
     cooldown_days: int | None = None
     max_trades_per_day: int | None = None
-    # 新5因子权重
+    # 4子策略融合权重
     trend_weight: float | None = None
     momentum_weight: float | None = None
-    volume_weight: float | None = None
-    volatility_weight: float | None = None
-    fundamental_weight: float | None = None
+    volume_price_weight: float | None = None
+    quality_weight: float | None = None
     # 风控开关
     enable_risk_control: bool | None = None
     enable_st_filter: bool | None = None
@@ -192,9 +190,26 @@ class BacktestRunRequest(BaseModel):
     max_drawdown_limit: int = Field(20, description="最大回撤限制(%)")
 
 
+class BacktestTaskResponse(BaseModel):
+    """提交回测任务后立即返回"""
+    task_id: str
+    status: str  # "submitted"
+    message: str
+
+
+class BacktestTaskStatusResponse(BaseModel):
+    """回测任务状态查询"""
+    task_id: str
+    status: str  # "pending" | "running" | "completed" | "failed"
+    progress: float = 0.0       # 0-100
+    message: str = ""            # 当前阶段的描述
+    error: str | None = None     # 失败时的错误信息
+
+
 class TransactionItem(BaseModel):
     date: str
     code: str
+    name: str
     action: str
     price: float
     shares: int

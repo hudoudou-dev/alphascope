@@ -32,7 +32,6 @@ from src.strategy.sub_strategies import (
     MomentumStrategy,
     VolumePriceStrategy,
     QualityStrategy,
-    SubStrategyWeights,
 )
 from src.strategy.regime import MarketRegime, RegimeDetector
 
@@ -63,12 +62,11 @@ class SelectionConfig:
     cooldown_days: int = 5  # 冷却期（卖出后多少天内不能重新买入同一只股票）
     max_trades_per_day: int = 5  # 每天最大交易次数
     
-    # ============ 5因子评分权重（总和=100%） ============
-    trend_weight: float = 35.0       # 趋势信号权重（%）
-    momentum_weight: float = 25.0    # 动量信号权重（%）
-    volume_weight: float = 20.0      # 成交量信号权重（%）
-    volatility_weight: float = 10.0  # 波动率信号权重（%）
-    fundamental_weight: float = 10.0 # 基本面权重（%，数据不可得时自动重新分配）
+    # ============ 4子策略融合权重（总和=100%） ============
+    trend_weight: float = 35.0           # 趋势跟踪子策略权重（%）— TrendStrategy
+    momentum_weight: float = 25.0        # 动量反转子策略权重（%）— MomentumStrategy
+    volume_price_weight: float = 25.0    # 量价共振子策略权重（%）— VolumePriceStrategy
+    quality_weight: float = 15.0         # 低波质量子策略权重（%）— QualityStrategy
     
     # ============ 风控配置 ============
     enable_risk_control: bool = True        # 是否启用风控
@@ -100,12 +98,11 @@ class SelectionConfig:
             min_score_threshold=config.get("min_score_threshold", 50.0),
             cooldown_days=config.get("cooldown_days", 5),
             max_trades_per_day=config.get("max_trades_per_day", 5),
-            # 5因子权重
-            trend_weight=config.get("trend_weight", 30.0),
+            # 4子策略融合权重
+            trend_weight=config.get("trend_weight", 35.0),
             momentum_weight=config.get("momentum_weight", 25.0),
-            volume_weight=config.get("volume_weight", 20.0),
-            volatility_weight=config.get("volatility_weight", 15.0),
-            fundamental_weight=config.get("fundamental_weight", 10.0),
+            volume_price_weight=config.get("volume_price_weight", 25.0),
+            quality_weight=config.get("quality_weight", 15.0),
             # 风控配置
             enable_risk_control=config.get("enable_risk_control", True),
             enable_st_filter=config.get("enable_st_filter", True),
@@ -133,12 +130,11 @@ class SelectionConfig:
             "min_score_threshold": self.min_score_threshold,
             "cooldown_days": self.cooldown_days,
             "max_trades_per_day": self.max_trades_per_day,
-            # 5因子权重
+            # 4子策略融合权重
             "trend_weight": self.trend_weight,
             "momentum_weight": self.momentum_weight,
-            "volume_weight": self.volume_weight,
-            "volatility_weight": self.volatility_weight,
-            "fundamental_weight": self.fundamental_weight,
+            "volume_price_weight": self.volume_price_weight,
+            "quality_weight": self.quality_weight,
             # 风控配置
             "enable_risk_control": self.enable_risk_control,
             "enable_st_filter": self.enable_st_filter,
@@ -172,16 +168,21 @@ class SelectionStrategy(BaseStrategy):
         self._market_filter = MarketFilter()
         
         # ===== 多策略组合器（核心）=====
-        sub_weights = SubStrategyWeights.from_config()
-        normalized = sub_weights.normalize()
+        # 直接使用 SelectionConfig 中的4子策略权重（由前端配置），归一化
+        raw_weights = {
+            "TrendStrategy": self.config.trend_weight,
+            "MomentumStrategy": self.config.momentum_weight,
+            "VolumePriceStrategy": self.config.volume_price_weight,
+            "QualityStrategy": self.config.quality_weight,
+        }
+        total = sum(raw_weights.values())
+        if total > 0:
+            normalized_weights = {k: v / total for k, v in raw_weights.items()}
+        else:
+            normalized_weights = {k: 0.25 for k in raw_weights}
         
         self._combiner = StrategyCombiner(
-            combiner=WeightedAverageCombiner(weights={
-                "TrendStrategy": normalized.get("trend", 30) / 100,
-                "MomentumStrategy": normalized.get("momentum", 25) / 100,
-                "VolumePriceStrategy": normalized.get("volume_price", 25) / 100,
-                "QualityStrategy": normalized.get("quality", 20) / 100,
-            }),
+            combiner=WeightedAverageCombiner(weights=normalized_weights),
             unified_data=True,
         )
         
@@ -192,12 +193,7 @@ class SelectionStrategy(BaseStrategy):
         self._combiner.add_strategy(QualityStrategy())
         
         # 子策略基础权重（归一化后，总和=1），供横截面/regime 重加权使用
-        self._sub_weights: dict[str, float] = {
-            "TrendStrategy": normalized.get("trend", 30) / 100,
-            "MomentumStrategy": normalized.get("momentum", 25) / 100,
-            "VolumePriceStrategy": normalized.get("volume_price", 25) / 100,
-            "QualityStrategy": normalized.get("quality", 20) / 100,
-        }
+        self._sub_weights: dict[str, float] = normalized_weights
         
         # 横截面标准化 / 行情自适应开关（默认关闭，向后兼容）
         cs_cfg = config_loader.get("strategy.cross_sectional", {})
@@ -211,7 +207,7 @@ class SelectionStrategy(BaseStrategy):
         self.logger.info(
             "SelectionStrategy 初始化完成（多策略组合模式）",
             sub_strategies=[s.strategy_name for s in self._combiner.strategies],
-            weights=normalized,
+            weights=normalized_weights,
         )
     
     def prepare(self, df: pd.DataFrame) -> pd.DataFrame:

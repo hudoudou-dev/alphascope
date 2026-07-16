@@ -102,17 +102,30 @@ async def run_selection():
         )
 
     for code, (df_recent, latest, stock_name) in prepared.items():
-        if universe_scores is not None:
-            u = universe_scores.get(code)
-            if u is None:
-                continue
-            score = u["score"]
-            sub_scores = u["detail"]
-            completeness = u["completeness"]
-        else:
-            score = strategy.score_stock(code, df_recent)
-            sub_scores = strategy.get_last_detail_scores()
-            completeness = strategy.get_last_completeness()
+        try:
+            if universe_scores is not None:
+                u = universe_scores.get(code)
+                if u is None:
+                    continue
+                score = u["score"]
+                sub_scores = u["detail"]
+                completeness = u["completeness"]
+                # universe路径也应用后处理（与score_stock保持一致）
+                close_price = float(latest.get("close_price", 0))
+                ma20 = float(latest.get("ma20", 0)) if latest.get("ma20") is not None else 0
+                ma60 = float(latest.get("ma60", 0)) if latest.get("ma60") is not None else 0
+                if close_price > ma20 > ma60 > 0:
+                    score += 3.0
+                # 涨跌停惩罚
+                score *= strategy._calc_limit_penalty(df_recent)
+                score = max(0.0, min(100.0, score))
+            else:
+                score = strategy.score_stock(code, df_recent)
+                sub_scores = strategy.get_last_detail_scores()
+                completeness = strategy.get_last_completeness()
+        except Exception as e:
+            logger.warning(f"Failed to score {code}: {e}")
+            continue
 
         latest_close = float(latest.get("close_price", 0))
         latest_pct_chg = latest.get("pct_chg", 0)

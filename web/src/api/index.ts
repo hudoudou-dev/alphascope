@@ -59,7 +59,8 @@ export const selectionApi = {
 // ==================== Backtest ====================
 
 export const backtestApi = {
-  run: (data: {
+  /** 提交回测任务，立即返回 { task_id, status, message } */
+  submit: (data: {
     start_date: string
     end_date: string
     initial_cash: number
@@ -67,7 +68,15 @@ export const backtestApi = {
     stop_loss_pct: number
     take_profit_pct: number
     max_drawdown_limit: number
-  }) => http.post('/backtest/run', data),
+  }) => http.post('/backtest/run', data, { timeout: 10000 }),
+
+  /** 查询任务进度，返回 { task_id, status, progress, message, error } */
+  status: (taskId: string) =>
+    http.get(`/backtest/status/${taskId}`, { timeout: 5000 }),
+
+  /** 获取已完成任务的结果，返回完整 BacktestResultResponse */
+  result: (taskId: string) =>
+    http.get(`/backtest/result/${taskId}`, { timeout: 30000 }),
 }
 
 // ==================== Calendar ====================

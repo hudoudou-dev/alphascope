@@ -50,6 +50,8 @@ data/*.parquet
 .zhanlu/
 .idea/
 .vscode/
+.codebuddy/
+.playwright-mcp/
 *.suo
 *.ntvs*
 *.njsproj

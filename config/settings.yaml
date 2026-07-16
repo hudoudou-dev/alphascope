@@ -10,32 +10,27 @@ data:
       retry_delay: 1.0
     tushare:
       enabled: true
-      token: ${TUSHARE_TOKEN}
+      token: null
       retry_times: 3
       retry_delay: 1.0
-  
   storage:
     base_path: ./data
     compression: snappy
     partition_by: code
-    
   update:
     incremental: true
     lookback_days: 30
-    
   validation:
     check_future_date: true
     check_negative_price: true
     check_duplicate_date: true
     check_missing_values: true
-
 strategy:
   default:
     stop_loss_pct: -15.0
     take_profit_pct: 20.0
     max_position_pct: 30.0
     max_positions: 10
-  
   ma_strategy:
     ma_short: 5
     ma_long: 20
@@ -43,89 +38,66 @@ strategy:
     score_trend_up_weak: 60.0
     score_trend_down: 25.0
     score_neutral: 50.0
-  
-  # 多策略组合配置（子策略权重与超参）
   sub_strategies:
-    # 融合权重（总和100%）
-    trend_weight: 30.0        # 趋势跟踪策略权重
-    momentum_weight: 25.0     # 动量反转策略权重
-    volume_price_weight: 25.0 # 量价共振策略权重
-    quality_weight: 20.0      # 低波动质量策略权重
-    
-    # ==================== 策略A：趋势跟踪策略 ====================
+    trend_weight: 30.0
+    momentum_weight: 25.0
+    volume_price_weight: 25.0
+    quality_weight: 20.0
     trend:
-      # ADX 趋势强度阈值
       adx_strong_threshold: 25.0
       adx_weak_threshold: 20.0
-      
-      # ADX 场景评分
-      adx_strong_up: 80.0           # ADX强势+PDI>MDI
-      adx_strong_down: 30.0         # ADX强势+PDI<=MDI
-      adx_moderate_up: 65.0         # ADX温和+PDI>MDI
-      adx_moderate_down: 40.0       # ADX温和+PDI<=MDI
-      adx_weak_neutral: 50.0        # ADX弱势/缺失默认
-      
-      # 子因子权重（ADX + MA + MACD + 回调）
-      adx_weight: 0.30
-      ma_weight: 0.30
-      macd_weight: 0.20
-      pullback_weight: 0.20
-      
-      # MA 排列评分
-      ma_perfect_bull: 85.0         # 完美多头排列 close>ma5>ma10>ma20>ma60
-      ma_partial_bull: 75.0         # 部分多头 close>ma5>ma10>ma20
-      ma_short_bull: 65.0           # 短期多头 close>ma5>ma10
-      ma_perfect_bear: 25.0         # 完美空头
-      ma_partial_bear: 35.0         # 部分空头
-      ma_short_bear: 45.0           # 短期空头
-      ma_above_ma5_not_bull: 47.0   # 价>MA5但非多头排列
-      ma_below_ma5_ma_still_up: 58.0 # 价<MA5但MA5>MA10
-      ma_above_ma20: 55.0           # 价>MA20
-      ma_below_ma20: 45.0           # 价<MA20
-      ma_default_neutral: 50.0      # 均线默认分
-      
-      # MACD 信号评分
-      macd_base: 50.0               # MACD基准分
-      macd_golden_cross_bonus: 18.0 # 金叉加分
-      macd_dead_cross_penalty: -15.0 # 死叉基础减分
-      macd_dead_strong_bull_discount: 0.35  # 强牛市死叉折扣系数
-      macd_dead_mid_bull_discount: 0.60     # 中牛市死叉折扣系数
-      macd_hist_positive: 3.0       # 柱>0加分
-      macd_hist_negative_bull: -2.0 # 牛市中柱<0减分
-      macd_hist_negative_weak: -4.0 # 弱市中柱<0减分
-      
-      # 回调买点评分
-      pullback_no_pullback: 50.0    # 不在回调中
-      pullback_ma_perfect: 82.0     # 完美均线多头+回调
-      pullback_long_bull: 75.0      # 强牛+回调
-      pullback_mid_bull: 62.0       # 中牛+回调
-      pullback_below_ma60: 30.0     # 跌破MA60
-      pullback_other: 45.0          # 其他回调
-    
-    # ==================== 策略B：动量反转策略 ====================
+      adx_strong_up: 80.0
+      adx_strong_down: 30.0
+      adx_moderate_up: 65.0
+      adx_moderate_down: 40.0
+      adx_weak_neutral: 50.0
+      adx_weight: 0.3
+      ma_weight: 0.3
+      macd_weight: 0.2
+      pullback_weight: 0.2
+      ma_perfect_bull: 85.0
+      ma_partial_bull: 75.0
+      ma_short_bull: 65.0
+      ma_perfect_bear: 25.0
+      ma_partial_bear: 35.0
+      ma_short_bear: 45.0
+      ma_above_ma5_not_bull: 47.0
+      ma_below_ma5_ma_still_up: 58.0
+      ma_above_ma20: 55.0
+      ma_below_ma20: 45.0
+      ma_default_neutral: 50.0
+      macd_base: 50.0
+      macd_golden_cross_bonus: 18.0
+      macd_dead_cross_penalty: -15.0
+      macd_dead_strong_bull_discount: 0.35
+      macd_dead_mid_bull_discount: 0.6
+      macd_hist_positive: 3.0
+      macd_hist_negative_bull: -2.0
+      macd_hist_negative_weak: -4.0
+      pullback_no_pullback: 50.0
+      pullback_no_pullback_bull: 65.0
+      pullback_no_pullback_bear: 45.0
+      pullback_ma_perfect: 82.0
+      pullback_long_bull: 75.0
+      pullback_mid_bull: 62.0
+      pullback_below_ma60: 30.0
+      pullback_other: 45.0
     momentum:
-      # 子因子权重
-      short_reversal_weight: 0.35   # 短期反转
-      multi_momentum_weight: 0.35   # 多周期动量
-      rsi_weight: 0.30              # RSI
-      
-      # 多周期动量内层权重
-      mom10_weight: 0.40            # 10日动量
-      mom20_weight: 0.35            # 20日动量
-      mom60_weight: 0.25            # 60日动量
-      
-      # 短期反转评分（5日涨跌幅 → 分数）
-      short_rev_severe_oversold: 78.0   # ret<-15%
-      short_rev_oversold: 72.0          # ret<-10%
-      short_rev_clear_oversold: 65.0    # ret<-7%
-      short_rev_mild_oversold: 58.0     # ret<-3%
-      short_rev_slight_fall: 52.0       # ret<0
-      short_rev_slight_rise: 48.0       # ret<5
-      short_rev_overbought: 40.0        # ret<10
-      short_rev_hot: 30.0               # ret<20
-      short_rev_extreme_hot: 22.0       # ret>=20
-      
-      # 短期反转阈值
+      short_reversal_weight: 0.2
+      multi_momentum_weight: 0.5
+      rsi_weight: 0.3
+      mom10_weight: 0.4
+      mom20_weight: 0.35
+      mom60_weight: 0.25
+      short_rev_severe_oversold: 78.0
+      short_rev_oversold: 72.0
+      short_rev_clear_oversold: 65.0
+      short_rev_mild_oversold: 58.0
+      short_rev_slight_fall: 52.0
+      short_rev_slight_rise: 48.0
+      short_rev_overbought: 40.0
+      short_rev_hot: 30.0
+      short_rev_extreme_hot: 22.0
       short_rev_severe_bound: -15
       short_rev_oversold_bound: -10
       short_rev_clear_bound: -7
@@ -134,226 +106,256 @@ strategy:
       short_rev_slight_rise_bound: 5
       short_rev_overbought_bound: 10
       short_rev_hot_bound: 20
-      
-      # 10日动量评分
-      mom10_strong_up: 55.0         # ret>15%
-      mom10_moderate_up: 65.0       # ret>5%
-      mom10_slight_up: 58.0         # ret>0
-      mom10_slight_down: 48.0       # ret>-5%
-      mom10_down: 35.0              # ret<=-5%
-      mom10_thresholds: [15, 5, 0, -5]
-      
-      # 20日动量评分
-      mom20_extreme_up: 50.0        # ret>30%
-      mom20_strong_up: 62.0         # ret>15%
-      mom20_moderate_up: 68.0       # ret>5%
-      mom20_slight_up: 60.0         # ret>0
-      mom20_slight_down: 45.0       # ret>-10%
-      mom20_down: 30.0              # ret<=-10%
-      mom20_thresholds: [30, 15, 5, 0, -10]
-      
-      # 60日动量评分
-      mom60_extreme_up: 60.0        # ret>30%
-      mom60_strong_up: 68.0         # ret>10%
-      mom60_moderate_up: 60.0       # ret>0
-      mom60_slight_down: 42.0       # ret>-15%
-      mom60_down: 28.0              # ret<=-15%
-      mom60_thresholds: [30, 10, 0, -15]
-      
-      # RSI 评分
-      rsi_oversold_bouncing: 75.0   # RSI<25 且回升中
-      rsi_oversold_falling: 52.0    # RSI<25 且继续跌
-      rsi_low: 65.0                 # 25<=RSI<35
-      rsi_mid_low: 58.0             # 35<=RSI<45
-      rsi_neutral: 50.0             # 45<=RSI<55
-      rsi_mid_high: 45.0            # 55<=RSI<65
-      rsi_high: 35.0                # 65<=RSI<75
-      rsi_overbought: 25.0          # RSI>=75
-      rsi_thresholds: [25, 35, 45, 55, 65, 75]
-    
-    # ==================== 策略C：量价共振策略 ====================
+      mom10_extreme_up: 82.0
+      mom10_strong_up: 70.0
+      mom10_moderate_up: 58.0
+      mom10_slight_down: 45.0
+      mom10_down: 30.0
+      mom10_thresholds:
+      - 15
+      - 5
+      - 0
+      - -5
+      mom20_extreme_up: 85.0
+      mom20_strong_up: 72.0
+      mom20_moderate_up: 62.0
+      mom20_slight_up: 55.0
+      mom20_slight_down: 42.0
+      mom20_down: 25.0
+      mom20_thresholds:
+      - 30
+      - 15
+      - 5
+      - 0
+      - -10
+      mom60_extreme_up: 88.0
+      mom60_strong_up: 75.0
+      mom60_moderate_up: 62.0
+      mom60_slight_down: 42.0
+      mom60_down: 28.0
+      mom60_thresholds:
+      - 30
+      - 10
+      - 0
+      - -15
+      rsi_oversold_bouncing: 75.0
+      rsi_oversold_falling: 52.0
+      rsi_low: 65.0
+      rsi_mid_low: 58.0
+      rsi_neutral: 50.0
+      rsi_mid_high: 45.0
+      rsi_high: 35.0
+      rsi_overbought: 35.0
+      rsi_overbought_rising: 50.0
+      rsi_thresholds:
+      - 25
+      - 35
+      - 45
+      - 55
+      - 65
+      - 75
     volume_price:
-      # 子因子权重
-      vol_ratio_weight: 0.30        # 量比
-      turnover_weight: 0.15         # 换手率
-      vp_corr_weight: 0.20          # 量价相关性
-      obv_weight: 0.20              # OBV趋势
-      shrink_stop_weight: 0.15      # 缩量止跌
-      
-      # 量比评分
-      vol_ratio_strong: 75.0        # >2.5 明显放量
-      vol_ratio_moderate: 68.0      # >1.8
-      vol_ratio_slight: 60.0        # >1.3
-      vol_ratio_normal: 50.0        # >0.8 正常
-      vol_ratio_shrink: 42.0        # >0.5 缩量
-      vol_ratio_extreme_shrink: 35.0 # <=0.5 极度缩量
-      vol_ratio_thresholds: [2.5, 1.8, 1.3, 0.8, 0.5]
-      
-      # 换手率评分
-      turnover_ideal: 70.0          # 3%~10% 适中
-      turnover_good: 60.0           # 1.5%~3%
-      turnover_high: 55.0           # 10%~20%
-      turnover_low: 40.0            # <1.5%
-      turnover_extreme: 30.0        # >20%
+      vol_ratio_weight: 0.3
+      turnover_weight: 0.15
+      vp_corr_weight: 0.2
+      obv_weight: 0.2
+      shrink_stop_weight: 0.15
+      vol_ratio_strong: 75.0
+      vol_ratio_moderate: 68.0
+      vol_ratio_slight: 60.0
+      vol_ratio_normal: 50.0
+      vol_ratio_shrink: 42.0
+      vol_ratio_extreme_shrink: 35.0
+      vol_ratio_thresholds:
+      - 2.5
+      - 1.8
+      - 1.3
+      - 0.8
+      - 0.5
+      turnover_ideal: 70.0
+      turnover_good: 60.0
+      turnover_high: 55.0
+      turnover_low: 40.0
+      turnover_extreme: 30.0
       turnover_low_bound: 1.5
       turnover_ideal_low: 3
       turnover_ideal_high: 10
       turnover_high_bound: 20
-      
-      # 量价相关性评分
-      vp_corr_positive_up: 72.0     # 正相关+涨（量价齐升）
-      vp_corr_positive_down: 40.0   # 正相关+跌（量价齐跌）
-      vp_corr_negative_down: 65.0   # 负相关+跌（价跌量缩）
-      vp_corr_negative_up: 42.0     # 负相关+涨（价涨量缩）
-      vp_corr_neutral: 50.0         # 弱相关
+      vp_corr_positive_up: 72.0
+      vp_corr_positive_down: 40.0
+      vp_corr_negative_down: 65.0
+      vp_corr_negative_up: 42.0
+      vp_corr_neutral: 50.0
       vp_corr_positive_bound: 0.5
       vp_corr_negative_bound: -0.3
-      
-      # OBV 评分
-      obv_above_ma: 65.0            # OBV>MA5
-      obv_below_ma: 40.0            # OBV<=MA5
-      
-      # 缩量止跌评分
-      shrink_stop_strong: 72.0      # 价波幅<2% + 量<均量70%
-      shrink_stop_mild: 60.0        # 价波幅<3% + 量<均量90%
-      shrink_stop_vol_only: 55.0    # 量<均量50%但价不稳
-      shrink_stop_none: 48.0        # 无明显信号
+      obv_strong_up: 80.0
+      obv_up: 60.0
+      obv_flat: 50.0
+      obv_down: 35.0
+      shrink_stop_strong: 72.0
+      shrink_stop_mild: 60.0
+      shrink_stop_vol_only: 55.0
+      shrink_stop_none: 48.0
       shrink_price_range_tight: 2.0
       shrink_price_range_loose: 3.0
       shrink_vol_ratio_tight: 0.7
       shrink_vol_ratio_loose: 0.9
       shrink_vol_ratio_half: 0.5
-    
-    # ==================== 策略D：低波动质量策略 ====================
     quality:
-      # 子因子权重
-      volatility_weight: 0.30       # 历史波动率
-      skewness_weight: 0.20         # 收益偏度
-      downside_weight: 0.20         # 下行风险
-      fundamental_weight: 0.30      # 基本面
-      
-      # 波动率评分
-      vol_extreme_low: 78.0         # <20% 极低波动
-      vol_low: 68.0                 # <30% 低波动
-      vol_medium: 55.0              # <40% 中等
-      vol_high: 40.0                # <55% 偏高
-      vol_extreme_high: 25.0        # >=55% 高波动
-      vol_thresholds: [0.20, 0.30, 0.40, 0.55]
-      
-      # 收益偏度评分
-      skew_strong_positive: 72.0    # >0.8 强正偏
-      skew_mild_positive: 63.0      # >0.3 温和正偏
-      skew_neutral: 50.0            # >-0.3 中性
-      skew_mild_negative: 40.0      # >-0.8 温和负偏
-      skew_strong_negative: 28.0    # <=-0.8 强负偏
-      skew_thresholds: [0.8, 0.3, -0.3, -0.8]
-      
-      # 下行风险评分
-      down_extreme_low: 75.0        # <15%
-      down_low: 65.0                # <25%
-      down_medium: 52.0             # <35%
-      down_high: 38.0               # <50%
-      down_extreme_high: 22.0       # >=50%
-      down_thresholds: [0.15, 0.25, 0.35, 0.50]
-  
-  # 选股策略超参配置
+      volatility_weight: 0.3
+      skewness_weight: 0.2
+      downside_weight: 0.2
+      fundamental_weight: 0.3
+      vol_extreme_low: 78.0
+      vol_low: 68.0
+      vol_medium: 55.0
+      vol_high: 40.0
+      vol_extreme_high: 25.0
+      vol_thresholds:
+      - 0.2
+      - 0.3
+      - 0.4
+      - 0.55
+      skew_strong_positive: 72.0
+      skew_mild_positive: 63.0
+      skew_neutral: 50.0
+      skew_mild_negative: 40.0
+      skew_strong_negative: 28.0
+      skew_thresholds:
+      - 0.8
+      - 0.3
+      - -0.3
+      - -0.8
+      down_extreme_low: 75.0
+      down_low: 65.0
+      down_medium: 52.0
+      down_high: 38.0
+      down_extreme_high: 22.0
+      down_thresholds:
+      - 0.15
+      - 0.25
+      - 0.35
+      - 0.5
   selection:
-    # 市值与价格区间
-    market_cap_min: 50  # 最小市值（亿元）
-    market_cap_max: 20000  # 最大市值（亿元）
-    price_min: 5.0  # 最小股价（元）
-    price_max: 2000.0  # 最大股价（元）
-    
-    # 涨跌停配置
-    limit_up_min: 0  # 最小涨停次数
-    limit_down_max: 3  # 最大跌停次数
-    limit_stat_period: 60  # 涨跌停统计周期（天）
-    max_up_threshold: 10.0  # 最大涨幅阈值（%）
-    max_down_threshold: -10.0  # 最大跌幅阈值（%）
-    
-    # 持仓配置
-    initial_cash: 1000000  # 初始资金量（元）
-    max_positions: 10  # 最大持仓股票数量
-    top_n: 20  # 候选股票数量（Top-N）
-    min_score_threshold: 50.0  # 最小评分阈值（中性=50，结合回调买点因子，50即可入选）
-    
-    # 交易频率控制
-    cooldown_days: 5  # 冷却期（卖出后多少天内不能重新买入同一只股票）
-    max_trades_per_day: 5  # 每天最大交易次数
-    
-    # 评分权重配置（5因子，总和应为100%）
-    trend_weight: 35         # 趋势信号权重（%）：MA排列 + MACD + 中期趋势
-    momentum_weight: 25      # 动量信号权重（%）：RSI + 价格动量
-    volume_weight: 20        # 成交量信号权重（%）：量比
-    volatility_weight: 10    # 波动率信号权重（%）：布林带位置
-    fundamental_weight: 10   # 基本面权重（%）：PE/PB/ROE/负债率（数据不可得时自动重分配）
-    
-    # 风控配置
-    enable_risk_control: true       # 是否启用风控
-    enable_st_filter: true          # ST股过滤
-    enable_limit_filter: true       # 涨停股过滤
-
-    # 横截面标准化 / 行情自适应（默认关闭）
-    cross_sectional_enabled: false
-    regime_enabled: false
-
-  # 横截面标准化（默认关闭）：将子策略原始得分按全市场横截面归一化到 0-100
+    market_cap_min: 50.0
+    market_cap_max: 20000.0
+    price_min: 5.0
+    price_max: 2000.0
+    limit_up_min: 0
+    limit_down_max: 3
+    limit_stat_period: 60
+    max_up_threshold: 10.0
+    max_down_threshold: -10.0
+    initial_cash: 1000000.0
+    max_positions: 6
+    top_n: 20
+    min_score_threshold: 50.0
+    cooldown_days: 5
+    max_trades_per_day: 5
+    max_buy_per_day: 2
+    max_sell_per_day: 5
+    trend_weight: 35.0
+    momentum_weight: 25.0
+    volume_price_weight: 25.0
+    quality_weight: 15.0
+    enable_risk_control: true
+    enable_st_filter: true
+    enable_limit_filter: true
+    cross_sectional_enabled: true
+    regime_enabled: true
+  sell_signals:
+    # ===== 最短持有期（除硬止损外，持有不足此天数不触发其他卖出信号）=====
+    min_holding_days: 10
+    # ===== 硬止损 =====
+    hard_stop_loss_pct: -12.0
+    # ===== 保底固定止盈 =====
+    take_profit_backstop_pct: 80.0
+    # ===== 移动止盈（回撤保护）=====
+    trailing_stop_drawdown: -15.0
+    trailing_stop_drawdown_core: -20.0
+    trailing_stop_min_profit: 10.0
+    # ===== 核心仓位 =====
+    core_position_count: 3
+    # ===== 时间止损 =====
+    time_stop_days: 60
+    time_stop_loss_pct: -5.0
+    # ===== MA 趋势结构 =====
+    ma_dead_cross_days: 3
+    ma20_decline_lookback: 5
+    ma20_decline_pct: 0.01
+    # ===== ADX 趋势衰竭 =====
+    adx_exhaustion_threshold: 18.0
+    adx_decline_days: 5
+    adx_decline_from_threshold: 30.0
+    # ===== 得分恶化 =====
+    score_drop_ratio: 0.55
+    score_below_threshold: 50.0
+    score_decline_days: 5
+    score_decline_cumulative: 20.0
+    # ===== 动量衰竭 =====
+    mom_neg_count: 2
+    rsi_overbought_high: 70.0
+    rsi_overbought_exit: 65.0
+    rsi_core_relax: 10.0
+    short_crash_pct: -12.0
+    # ===== 量价背离 =====
+    vol_diverge_price_pct: 5.0
+    vol_diverge_vol_ratio: 0.6
+    vol_diverge_severe_vol_ratio: 0.4
+    vol_diverge_severe_price_pct: 8.0
+    obv_divergence_lookback: 20
+    crash_vol_ratio: 2.0
+    crash_price_pct: -5.0
+    # ===== 冷却期（按卖出原因区分）=====
+    cooldown_stop_loss: 15
+    cooldown_trend_deterioration: 20
+    cooldown_score_drop: 20
+    cooldown_trailing_stop: 15
+    cooldown_volume_price: 15
+    cooldown_momentum: 15
+    cooldown_time_stop: 20
+    cooldown_take_profit: 15
+    cooldown_default: 15
   cross_sectional:
-    method: zscore          # zscore | rank
-    clip: 3.0               # zscore 截断倍数（±clip 映射到 0-100 两端）
-
-  # 行情自适应权重（默认关闭）：依据 universe 横截面广度/波动率推导 regime 并切换子策略权重
+    method: zscore
+    clip: 3.0
   regime:
-    breadth_bull: 0.60     # 多头广度（close>ma20 占比）>=此值且低波动 → 强牛
-    breadth_trend: 0.50    # 多头广度 >=此值 → 温和趋势
-    breadth_bear: 0.40     # 多头广度 <=此值 → 熊市
-    vol_high: 0.50         # 平均年化波动率 >=此值 不算强牛
-    vol_low: 0.30
-
-  # 缺失数据处理配置
+    breadth_bull: 0.6
+    breadth_trend: 0.5
+    breadth_bear: 0.4
+    vol_high: 0.5
+    vol_low: 0.3
   missing_data:
-    mode: redistribute  # redistribute | neutral | penalize | exclude
-    # redistribute:  缺失因子不参与加权，剩余因子权重归一化（推荐）
-    # neutral:        缺失因子默认给50分并按原权重计入
-    # penalize:       缺失因子给低分并计入（惩罚数据不全的股票）
-    # exclude:        策略内某维度数据缺失时，该策略对该股票标记incomplete
+    mode: redistribute
     min_rows:
       adx: 15
       volatility: 20
       volume_price_corr: 10
       short_reversal: 6
-
 indicators:
   ma:
-    periods: [5, 10, 20, 60]
-  
+    periods:
+    - 5
+    - 10
+    - 20
+    - 60
   rsi:
     period: 14
     oversold: 30
     overbought: 70
-  
   macd:
     fast_period: 12
     slow_period: 26
     signal_period: 9
-  
   bollinger_bands:
     period: 20
     std_dev: 2.0
-  
-  weights:
-    ma: 0.3
-    rsi: 0.25
-    macd: 0.25
-    volume: 0.2
-
 backtest:
   initial_cash: 1000000.0
   commission_rate: 0.0003
   stamp_duty_rate: 0.001
   min_commission: 5.0
   trading_days_per_year: 252
-
 web:
   control_panel:
     initial_cash:
@@ -361,54 +363,44 @@ web:
       max_value: 100000000
       default_value: 1000000
       step: 10000
-    
     ma_short:
       min_value: 3
       max_value: 20
       default_value: 5
-    
     ma_long:
       min_value: 10
       max_value: 60
       default_value: 20
-    
     stop_loss:
       min_value: -20
       max_value: -1
       default_value: -8
-    
     take_profit:
       min_value: 5
       max_value: 50
       default_value: 20
-    
-    default_start_date: "2024-01-01"
-    default_end_date: "2024-03-31"
-
+    default_start_date: '2024-01-01'
+    default_end_date: '2024-03-31'
 notification:
   dingtalk:
     enabled: false
-    webhook_url: ""
+    webhook_url: ''
     retry_times: 3
     timeout: 10
-  
   feishu:
     enabled: false
-    webhook_url: ""
+    webhook_url: ''
     retry_times: 3
     timeout: 10
-  
   retry:
     max_attempts: 3
     wait_multiplier: 1
     wait_min: 1
     wait_max: 10
-
 logging:
   level: INFO
   format: json
   timezone: Asia/Shanghai
-
 cache:
   redis:
     host: localhost
@@ -419,5 +411,4 @@ cache:
     stock_detail: 300
     strategy_config: 30
     selection_result: 300
-
 timezone: Asia/Shanghai
